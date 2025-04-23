@@ -46,7 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger("realtime_transcribe")
 
 # Constants
-DEFAULT_LANGUAGE = "french"  # Default language, can be overridden
+DEFAULT_LANGUAGE = "english"  # Default language, can be overridden
 
 class AudioBuffer:
     """Enhanced audio buffer with voice activity detection."""
@@ -795,7 +795,7 @@ class RealTimeTranscriber:
 if __name__ == "__main__":
     # Configuration can be overridden
     config = {
-        "language": "french",  # Auto-detect language
+        "language": DEFAULT_LANGUAGE,  # Auto-detect language
         "chunk_size": 4000,  # 250ms chunks (4x original size)
         "sample_rate": 16000,
         "use_cuda": torch.cuda.is_available(),
