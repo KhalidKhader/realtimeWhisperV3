@@ -12,8 +12,446 @@ print("French WER: ", error)
 # 0.5795454545454546
 print("#"*10)
 
-reference="medical terms in canadian english category cardiology cardiology specialties cardiology interventional cardiology electrophysiology electrophysiology pediatric cardiology congenital heart diseaseheart disease specialist cardiothoracic surgery vascular surgery molecular surgery preventive cardiology heart failure specialist hyperdermatology specialist hypertension specialist transplant cardiology sports cardiologysports cardiology advanced heart failure and transplant cardiology cardiology nuclear cardiology echo cardiography cardiography specialist cardiac imaging specialist category story diseases and conditions expanded atherosclerosis angina pectoris stable unstable unstable myocardial infarction stemi nst nstmi coronary artery disease cad cad ischemic heart disease arrhythmia atrial fibrillation atrial fibrillation ventricular tachycardia etc bradycardia tachycardia heart failure systolic systolic diastolic congestive heart failure ch chf cardiomyopathy dilated hypertrophichypertrophic restrictive pericarditis endocarditisendocarditis myocarditis rheumatic heart diseaseheart disease mitral valve prolapse aortic stenosis l regurgitation tricuspid regurgitation pulmonary hysterectomy pulmonary hypertension deep vein thrombosis dvtdvt pulmonary embolism pe peripheral artery peripheral artery disease padd hypertrophic obstructive cardiomyopathy cardiomyopathy hocm long qt syndrome syndrome brugada syndrome wolffparkinsonwhite syndrome syndrome tetralogy of fallot patent ductus arteriosus pda ventricular septal defect vsd vsd atrial septal defect asd coarctingcoarctation of the aorta transposition of the great arteries arteries eisenmenger syndrome marfan syndrome takotsubo takotsubo cardiomyopathy broken heart syndrome cardiac tachycardia cardiac tamponade cardiogenic shock sudden cardiac arrestcardiac arrest syncope orthostatic hypotension vasovagal vasovagal syncope postural orthostatic tachycardia syndrome pots dilated cardiomyopathy restrictive heart diseaserestrictive cardiomyopathy infective endocarditis noncompaction cardiomyopathy coronary artery aneurysmartery aneurysmcoronary artery dissection coronary artery spasm variant angiopathy variant angina prince metal angina stress induced cardiomyopathy cardiomyopathy cardiac sarcoidosis amyloidosisamyloidosiss cardiac fibroma cardiac lipoma cardiac rhabdomy cardiac rhabdomyoma cardiac hemangioma cardiac myxoma cardiac myxoma cardiac sarcoma cardiac lymphoma cardiac myxomacardiac metastasis cardiac thrombus cardiac embolismcardiac embolism cardiac rupture ventricular free wall rupture free wall rupture septal rupture papillary muscle rupturecategory medications expanded aspirinaspirin clopidogrel ticagrel or prasugrel warfarinwarfarin rivaroxaban apixaban adoxabandoxaban dabigatran beta blockers metoprolol coprolol atenolol propranolol calcium channel blockerschannel blockers amlodipine doltaeazem verapamilapamil ace inhibitors lisinopril analipril ramidine arbis losartan valsartan urbis arbis arbis arbis arbis arbis arbis arbis arbis sardine herbisardine diuretics furosemide hydrochlorothiazide spironolactone satins atorvacetamolatorvastatin rasuvastatin simvastatin nitrate nitrates nitroglycerin isosorbide dinitrate dinitrate digoxin amiodarone sodolol flecain flaconide propafenone ivabradine secubitril valsartan entresto aplurinon dobutamin dobutamine milrinone heparin low molecular weight heparinmolecular weight heparin lmwh fonda paranox carinax adenosine atropinerhine vasopressin nesiritide levosimendan limonadine ranolazine trimetazidine nicarandal ivacarevaporative evaporative evaporative evaporative evaporative evaporative evaporative evaporativeisosorbide mononitrate carvadolol bisoprololesoprolol nabivolol aliskyrin epiprostanol proprostanol troprostenol bosentin machitentin riosagrinol rio segua category anatomical terms expanded expanded heart left atrium right atrium left ventricle right right ventricle aorta pulmonary artery pulmonary vein pulmonary veins superior vena cava inferior vena cava inferior vena cava coronary arteriesleft anterior descending circumflex right coronary arterycoronary artery mitral valve tricuspid valve aortic valveaortic valve pulmonary valve pericardium endocardiumendocardium myocardium epicardium coronary sinus bundle of his bundle of his perkinye fibers sinoatrial node saw node atrioventricular node avnode av node interventricular septum atrial appendage arterial appendage papillary muscles chordae tendineaeannulus fibrosus fibrous skeleton of the heart moderator band krista terminalis foso valisligamentum arteriosum sinus of valsalva coronary osteoorinary ostium mini mae category medical procedures expanded electrocardiogram ecg ekg ekg holter monitor event monitor and stress test exercise pharmacologic echocardiogram echocardiogramtrans thoracic transesophageal cardiac catheterizationcolonization coronary angiography percutaneous coronary intervention coronary intervention pci stent placementballoon angioplasty atherectomy cardioversionimplantation electrical chemical pacemaker implantation implantable cardioverter defibrillator icd cardiac ablation maze procedurecoronary artery bypass grafting cabg heart transplant heart transplant ventricular assist device vodintraaortic balloon pump iabp cardiopulmonary resuscitationpulmonary resuscitation cpr defibrillation thrombosisthrombolysis ct angiography mri of the heart nuclear stress test stress test cardiac pet scanendomyocardial biopsy left heart catheterization right heartright heart catheterization swan gans catheterizationintra vascular ultrasound ivus optical catheterization optical coherence tomography october fractional flowtractional flow reserve ffr instantaneous wave free ratiowave free ratio ifriac magnetic resonance imaging cmr cardiac computercardiac computed tomography cct transcatheter aorta transcatheter aortic valve replacement tavr mitraclip proceduremitraclip procedure left atrial appendage closure pulmonary vein isolation pvi epicardial mapping mapping endocardial mapping cardiac resynchronization therapytherapy crt categoryclinical terms expandedsystole diastole stroke volume cardiac outputejection fraction preload afterload heart rateblood pressure systolic diastolicpulse pressure mean arterial pressuremap hypertension primarysecondary hypotension dyspnea orthopneaparoxysmal nocturnal dyspnea pnd edema peripheralperipheral pulmonary jugular venous distension jvm lumbarjvd murmur systolicdiastolic gallop rhythm s3 s4 palpitation palpitations cyanosis clubbing chest painchest pain anginal nonanginal claudication syncope presyncope lightheadedness fatigue weaknessdizziness vertigo orthostatic intolerance pulsus parispulsus paradoxus pulsus alternans cusmals signsmalls sign becks triadhows triad oslers nodes janeway lesions rothspotrothspots splinter hemorrhages waterhammer pulseor pulsecorrigans pulse capillary refill time central venous pressure venous pressure cvp pcwp cardiac index c systemic vascularsystemic vascular resistance svr pulmonary vascularpvr oxygen saturation spo2 mixed 2 mixed venus oxygen saturation canadian english script cardiology specialtiescardiology interventional cardiology electrophysiology pediatric cardiology congenital heart disease specialist cardiothoracic surgery vascular surgery preventive cardiology heart failure specialist hypertension specialist transplant cardiology sports cardiology advanced heart failure and transplant cardiology nuclear cardiology echocardiography specialist cardiac imaging specialist diseases and conditions expanded  atherosclerosis angina pectoris stable unstable myocardial infarction stemi nstemi coronary artery disease cad ischemic heart disease arrhythmia atrial fibrillation ventricular tachycardia etc bradycardia tachycardia heart failure systolic diastolic congestive heart failure chf cardiomyopathy dilated hypertrophic restrictive pericarditis endocarditis myocarditis rheumatic heart disease mitral valve prolapse aortic stenosis mitral regurgitation tricuspid regurgitation pulmonary hypertension deep vein thrombosis dvt pulmonary embolism pe peripheral artery disease pad hypertrophic obstructive cardiomyopathy hocm long qt syndrome brugada syndrome wolffparkinsonwhite syndrome tetralogy of fallot patent ductus arteriosus pda ventricular septal defect vsd atrial septal defect asd coarctation of the aorta transposition of the great arteries eisenmenger syndrome marfan syndrome takotsubo cardiomyopathy broken heart syndrome cardiac tamponade cardiogenic shock sudden cardiac arrest syncope orthostatic hypotension vasovagal syncope postural orthostatic tachycardia syndrome pots dilated cardiomyopathy restrictive cardiomyopathy infective endocarditis noncompaction cardiomyopathy coronary artery aneurysm coronary artery dissection coronary artery spasm variant angina prinzmetal angina stressinduced cardiomyopathy cardiac sarcoidosis amyloidosis cardiac amyloidosis cardiac fibroma cardiac lipoma cardiac rhabdomyoma cardiac hemangioma cardiac myxoma cardiac sarcoma cardiac lymphoma cardiac metastasis cardiac thrombus cardiac embolism cardiac rupture ventricular free wall rupture septal rupture papillary muscle rupture medications expanded  aspirin clopidogrel ticagrelor prasugrel warfarin rivaroxaban apixaban edoxaban dabigatran betablockers metoprolol atenolol propranolol calcium channel blockers amlodipine diltiazem verapamil ace inhibitors lisinopril enalapril ramipril arbs losartan valsartan irbesartan diuretics furosemide hydrochlorothiazide spironolactone statins atorvastatin rosuvastatin simvastatin nitrates nitroglycerin isosorbide dinitrate digoxin amiodarone sotalol flecainide propafenone ivabradine sacubitril valsartan entresto eplerenone dobutamine milrinone heparin low molecular weight heparin lmwh fondaparinux adenosine atropine epinephrine vasopressin nesiritide levosimendan ranolazine trimetazidine nicorandil ivabradine molsidomine hydralazine isosorbide mononitrate carvedilol bisoprolol nebivolol aliskiren epoprostenol treprostinil bosentan macitentan riociguat anatomical terms expanded  heart left atrium right atrium left ventricle right ventricle aorta pulmonary artery pulmonary veins superior vena cava inferior vena cava coronary arteries left anterior descending circumflex right coronary artery mitral valve tricuspid valve aortic valve pulmonary valve pericardium endocardium myocardium epicardium coronary sinus bundle of his purkinje fibers sinoatrial node sa node atrioventricular node av node interventricular septum atrial appendage papillary muscles chordae tendineae annulus fibrosus fibrous skeleton of the heart moderator band crista terminalis fossa ovalis ligamentum arteriosum sinus of valsalva coronary ostium venae cordis minimae medical procedures expanded  electrocardiogram ecg ekg holter monitor event monitor stress test exercise pharmacologic echocardiogram transthoracic transesophageal cardiac catheterization coronary angiography percutaneous coronary intervention pci stent placement balloon angioplasty atherectomy cardioversion electrical chemical pacemaker implantation implantable cardioverterdefibrillator icd cardiac ablation maze procedure coronary artery bypass grafting cabg heart transplant ventricular assist device vad intraaortic balloon pump iabp cardiopulmonary resuscitation cpr defibrillation thrombolysis ct angiography mri of the heart nuclear stress test cardiac pet scan endomyocardial biopsy left heart catheterization right heart catheterization swanganz catheterization intravascular ultrasound ivus optical coherence tomography oct fractional flow reserve ffr instantaneous wavefree ratio ifr cardiac magnetic resonance imaging cmr cardiac computed tomography cct transcatheter aortic valve replacement tavr mitraclip procedure left atrial appendage closure laac pulmonary vein isolation pvi epicardial mapping endocardial mapping cardiac resynchronization therapy crt clinical terms expanded systole diastole stroke volume cardiac output ejection fraction preload afterload heart rate blood pressure systolic diastolic pulse pressure mean arterial pressure map hypertension primary secondary hypotension dyspnea orthopnea paroxysmal nocturnal dyspnea pnd edema peripheral pulmonary jugular venous distension jvd murmur systolic diastolic gallop rhythm s3 s4 palpitations cyanosis clubbing chest pain anginal nonanginal claudication syncope presyncope lightheadedness fatigue weakness dizziness vertigo orthostatic intolerance pulsus paradoxus pulsus alternans kussmauls sign becks triad virchows triad oslers nodes janeway lesions roth spots splinter hemorrhages waterhammer pulse corrigans pulse capillary refill time central venous pressure cvp pulmonary capillary wedge pressure pcwp cardiac index ci systemic vascular resistance svr pulmonary vascular resistance pvr oxygen saturation spo2 mixed venous oxygen saturation svo2 "
+reference="""
+ canadian english script
+ cardiology specialties
+ cardiology  
+ interventional cardiology  
+ electrophysiology  
+ pediatric cardiology  
+ congenital heart disease specialist  
+ cardiothoracic surgery  
+ vascular surgery  
+ preventive cardiology  
+ heart failure specialist  
+ hypertension specialist  
+ transplant cardiology  
+ sports cardiology  
+ advanced heart failure and transplant cardiology  
+ nuclear cardiology  
+ echocardiography specialist  
+ cardiac imaging specialist  
+ diseases and conditions expanded
+ atherosclerosis  
+ angina pectoris stable unstable  
+ myocardial infarction stemi nstemi  
+ coronary artery disease cad  
+ ischemic heart disease  
+ arrhythmia atrial fibrillation ventricular tachycardia etc  
+ bradycardia  
+ tachycardia  
+ heart failure systolic diastolic  
+ congestive heart failure chf  
+ cardiomyopathy dilated hypertrophic restrictive  
+ pericarditis  
+ endocarditis  
+ myocarditis  
+ rheumatic heart disease  
+ mitral valve prolapse  
+ aortic stenosis  
+ mitral regurgitation  
+ tricuspid regurgitation  
+ pulmonary hypertension  
+ deep vein thrombosis dvt  
+ pulmonary embolism pe  
+ peripheral artery disease pad  
+ hypertrophic obstructive cardiomyopathy hocm  
+ long qt syndrome  
+ brugada syndrome  
+ wolffparkinsonwhite syndrome  
+ tetralogy of fallot  
+ patent ductus arteriosus pda  
+ ventricular septal defect vsd  
+ atrial septal defect asd  
+ coarctation of the aorta  
+ transposition of the great arteries  
+ eisenmenger syndrome  
+ marfan syndrome  
+ takotsubo cardiomyopathy broken heart syndrome  
+ cardiac tamponade  
+ cardiogenic shock  
+ sudden cardiac arrest  
+ syncope  
+ orthostatic hypotension  
+ vasovagal syncope  
+ postural orthostatic tachycardia syndrome pots  
+ dilated cardiomyopathy  
+ restrictive cardiomyopathy  
+ infective endocarditis  
+ noncompaction cardiomyopathy  
+ coronary artery aneurysm  
+ coronary artery dissection  
+ coronary artery spasm  
+ variant angina  
+ prinzmetal angina  
+ stressinduced cardiomyopathy  
+ cardiac sarcoidosis  
+ amyloidosis  
+ cardiac amyloidosis  
+ cardiac fibroma  
+ cardiac lipoma  
+ cardiac rhabdomyoma  
+ cardiac hemangioma  
+ cardiac myxoma  
+ cardiac sarcoma  
+ cardiac lymphoma  
+ cardiac metastasis  
+ cardiac thrombus  
+ cardiac embolism  
+ cardiac rupture  
+ ventricular free wall rupture  
+ septal rupture  
+ papillary muscle rupture  
+ medications expanded
+ aspirin  
+ clopidogrel  
+ ticagrelor  
+ prasugrel  
+ warfarin  
+ rivaroxaban  
+ apixaban  
+ edoxaban  
+ dabigatran  
+ betablockers metoprolol atenolol propranolol  
+ calcium channel blockers amlodipine diltiazem verapamil  
+ ace inhibitors lisinopril enalapril ramipril  
+ arbs losartan valsartan irbesartan  
+ diuretics furosemide hydrochlorothiazide spironolactone  
+ statins atorvastatin rosuvastatin simvastatin  
+ nitrates nitroglycerin isosorbide dinitrate  
+ digoxin  
+ amiodarone  
+ sotalol  
+ flecainide  
+ propafenone  
+ ivabradine  
+ sacubitril/valsartan entresto  
+ eplerenone  
+ dobutamine  
+ milrinone  
+ heparin  
+ low molecular weight heparin lmwh  
+ fondaparinux  
+ adenosine  
+ atropine  
+ epinephrine  
+ vasopressin  
+ nesiritide  
+ levosimendan  
+ ranolazine  
+ trimetazidine  
+ nicorandil  
+ ivabradine  
+ molsidomine  
+ hydralazine  
+ isosorbide mononitrate  
+ carvedilol  
+ bisoprolol  
+ nebivolol  
+ aliskiren  
+ epoprostenol  
+ treprostinil  
+ bosentan  
+ macitentan  
+ riociguat  
+ anatomical terms expanded
+ heart  
+ left atrium  
+ right atrium  
+ left ventricle  
+ right ventricle  
+ aorta  
+ pulmonary artery  
+ pulmonary veins  
+ superior vena cava  
+ inferior vena cava  
+ coronary arteries left anterior descending circumflex right coronary artery  
+ mitral valve  
+ tricuspid valve  
+ aortic valve  
+ pulmonary valve  
+ pericardium  
+ endocardium  
+ myocardium  
+ epicardium  
+ coronary sinus  
+ bundle of his  
+ purkinje fibers  
+ sinoatrial node sa node  
+ atrioventricular node av node  
+ interventricular septum  
+ atrial appendage  
+ papillary muscles  
+ chordae tendineae  
+ annulus fibrosus  
+ fibrous skeleton of the heart  
+ moderator band  
+ crista terminalis  
+ fossa ovalis  
+ ligamentum arteriosum  
+ sinus of valsalva  
+ coronary ostium  
+ venae cordis minimae  
+ medical procedures expanded
+ electrocardiogram ecg/ekg  
+ holter monitor  
+ event monitor  
+ stress test exercise pharmacologic  
+ echocardiogram transthoracic transesophageal  
+ cardiac catheterization  
+ coronary angiography  
+ percutaneous coronary intervention pci  
+ stent placement  
+ balloon angioplasty  
+ atherectomy  
+ cardioversion electrical chemical  
+ pacemaker implantation  
+ implantable cardioverterdefibrillator icd  
+ cardiac ablation  
+ maze procedure  
+ coronary artery bypass grafting cabg  
+ heart transplant  
+ ventricular assist device vad  
+ intraaortic balloon pump iabp  
+ cardiopulmonary resuscitation cpr  
+ defibrillation  
+ thrombolysis  
+ ct angiography  
+ mri of the heart  
+ nuclear stress test  
+ cardiac pet scan  
+ endomyocardial biopsy  
+ left heart catheterization  
+ right heart catheterization  
+ swanganz catheterization  
+ intravascular ultrasound ivus  
+ optical coherence tomography oct  
+ fractional flow reserve ffr  
+ instantaneous wavefree ratio ifr  
+ cardiac magnetic resonance imaging cmr  
+ cardiac computed tomography cct  
+ transcatheter aortic valve replacement tavr  
+ mitraclip procedure  
+ left atrial appendage closure laac  
+ pulmonary vein isolation pvi  
+ epicardial mapping  
+ endocardial mapping  
+ cardiac resynchronization therapy crt  
+ clinical terms expanded
+ systole  
+ diastole  
+ stroke volume  
+ cardiac output  
+ ejection fraction  
+ preload  
+ afterload  
+ heart rate  
+ blood pressure systolic diastolic  
+ pulse pressure  
+ mean arterial pressure map  
+ hypertension primary secondary  
+ hypotension  
+ dyspnea  
+ orthopnea  
+ paroxysmal nocturnal dyspnea pnd  
+ edema peripheral pulmonary  
+ jugular venous distension jvd  
+ murmur systolic diastolic  
+ gallop rhythm s3 s4  
+ palpitations  
+ cyanosis  
+ clubbing  
+ chest pain anginal nonanginal  
+ claudication  
+ syncope  
+ presyncope  
+ lightheadedness  
+ fatigue  
+ weakness  
+ dizziness  
+ vertigo  
+ orthostatic intolerance  
+ pulsus paradoxus  
+ pulsus alternans  
+ kussmauls sign  
+ becks triad  
+ virchows triad  
+ oslers nodes  
+ janeway lesions  
+ roth spots  
+ splinter hemorrhages  
+ waterhammer pulse  
+ corrigans pulse  
+ capillary refill time  
+ central venous pressure cvp  
+ pulmonary capillary wedge pressure pcwp  
+ cardiac index ci  
+ systemic vascular resistance svr  
+ pulmonary vascular resistance pvr  
+ oxygen saturation spo2  
+ mixed venous oxygen saturation svo2 
+"""
 
+hypothesis="""
+medical terms in canadian english category cardiology
+cardiology specialties
+cardiology interventional cardiology electrophysiology
+electrophysiology pediatric cardiology congenital heart disease
+heart disease specialist cardiothoracic surgery vascular surgery
+molecular surgery preventive cardiology heart failure specialist hyperdermatology
+specialist hypertension specialist transplant cardiology sports cardiology
+sports cardiology advanced heart failure and transplant cardiology
+cardiology nuclear cardiology echo cardiography
+cardiography specialist cardiac imaging specialist category
+story diseases and conditions expanded
+atherosclerosis angina pectoris stable unstable
+unstable myocardial infarction stemi nst
+nstmi coronary artery disease cad
+cad ischemic heart disease arrhythmia atrial fibrillation
+atrial fibrillation ventricular tachycardia etc
+bradycardia tachycardia heart failure systolic
+systolic diastolic congestive heart failure ch
+chf cardiomyopathy dilated hypertrophic
+hypertrophic restrictive pericarditis endocarditis
+endocarditis myocarditis rheumatic heart disease
+heart disease mitral valve prolapse aortic stenosis
+l regurgitation tricuspid regurgitation pulmonary hysterectomy
+pulmonary hypertension deep vein thrombosis dvt
+dvt pulmonary embolism pe peripheral artery
+peripheral artery disease padd hypertrophic obstructive cardiomyopathy
+cardiomyopathy hocm long qt syndrome
+syndrome brugada syndrome wolffparkinsonwhite syndrome
+syndrome tetralogy of fallot patent ductus arteriosus
+pda ventricular septal defect vsd
+vsd atrial septal defect asd coarcting
+coarctation of the aorta transposition of the great arteries
+arteries eisenmenger syndrome marfan syndrome takotsubo
+takotsubo cardiomyopathy broken heart syndrome cardiac tachycardia
+cardiac tamponade cardiogenic shock sudden cardiac arrest
+cardiac arrest syncope orthostatic hypotension vasovagal
+vasovagal syncope postural orthostatic tachycardia syndrome
+pots dilated cardiomyopathy restrictive heart disease
+restrictive cardiomyopathy infective endocarditis
+noncompaction cardiomyopathy coronary artery aneurysm
+artery aneurysm
+coronary artery dissection coronary artery spasm variant angiopathy
+variant angina prince metal angina stress induced cardiomyopathy
+cardiomyopathy cardiac sarcoidosis amyloidosis
+ amyloidosis
+s cardiac fibroma cardiac lipoma cardiac rhabdomy
+cardiac rhabdomyoma cardiac hemangioma cardiac myxoma
+cardiac myxoma cardiac sarcoma cardiac lymphoma cardiac myxoma
+cardiac metastasis cardiac thrombus cardiac embolism
+cardiac embolism cardiac rupture ventricular free wall rupture
+free wall rupture septal rupture papillary muscle rupture
+category medications expanded aspirin
+aspirin clopidogrel ticagrel or prasugrel warfarin
+warfarin rivaroxaban apixaban adoxaban
+doxaban dabigatran beta blockers metoprolol
+coprolol atenolol propranolol calcium channel blockers
+channel blockers amlodipine doltaeazem verapamil
+apamil ace inhibitors lisinopril analipril ramidine
+arbis losartan valsartan urbis arbis arbis arbis arbis arbis arbis arbis arbis
+sardine herbisardine diuretics furosemide
+hydrochlorothiazide spironolactone satins atorvacetamol
+atorvastatin rasuvastatin simvastatin nitrate
+nitrates nitroglycerin isosorbide dinitrate
+dinitrate digoxin amiodarone sodolol flecain
+flaconide propafenone ivabradine
+secubitril valsartan entresto aplurinon dobutamin
+dobutamine milrinone heparin low molecular weight heparin
+molecular weight heparin lmwh fonda paranox
+carinax adenosine atropine
+rhine vasopressin nesiritide levosimendan
+limonadine ranolazine trimetazidine nicarandal ivacar
+evaporative evaporative evaporative evaporative evaporative evaporative evaporative evaporative
+isosorbide mononitrate carvadolol bisoprolol
+esoprolol nabivolol aliskyrin epiprostanol
+proprostanol troprostenol bosentin machitentin riosagrinol
+rio segua category anatomical terms expanded
+ expanded
+heart left atrium right atrium left ventricle right
+right ventricle aorta pulmonary artery pulmonary vein
+pulmonary veins superior vena cava inferior vena cava
+inferior vena cava coronary arteries
+left anterior descending circumflex right coronary artery
+coronary artery mitral valve tricuspid valve aortic valve
+aortic valve pulmonary valve pericardium endocardium
+endocardium
+myocardium epicardium coronary sinus bundle of his
+bundle of his perkinye fibers
+sinoatrial node saw node atrioventricular node av
+node av node interventricular septum atrial appendage
+arterial appendage papillary muscles chordae tendineae
+annulus fibrosus fibrous skeleton of the heart
+moderator band krista terminalis foso valis
+ligamentum arteriosum sinus of valsalva coronary osteo
+orinary ostium
+mini mae category medical procedures
+expanded electrocardiogram ecg ekg
+ ekg
+holter monitor event monitor and
+stress test exercise pharmacologic echocardiogram
+echocardiogram
+trans thoracic transesophageal cardiac catheterization
+colonization coronary angiography percutaneous coronary intervention
+coronary intervention pci stent placement
+balloon angioplasty atherectomy cardioversion
+implantation electrical chemical pacemaker implantation
+implantable cardioverter defibrillator icd
+cardiac ablation maze procedure
+coronary artery bypass grafting cabg heart transplant
+heart transplant ventricular assist device vod
+intraaortic balloon pump iabp cardiopulmonary resuscitation
+pulmonary resuscitation cpr defibrillation thrombosis
+thrombolysis
+ct angiography mri of the heart nuclear stress test
+stress test cardiac pet scan
+endomyocardial biopsy left heart catheterization right heart
+right heart catheterization swan gans catheterization
+intra vascular ultrasound ivus optical catheterization
+optical coherence tomography october fractional flow
+tractional flow reserve ffr instantaneous wave free ratio
+wave free ratio ifr
+iac magnetic resonance imaging cmr cardiac computer
+cardiac computed tomography cct transcatheter aorta
+transcatheter aortic valve replacement tavr mitraclip procedure
+mitraclip procedure
+left atrial appendage closure 
+pulmonary vein isolation pvi epicardial mapping
+mapping endocardial mapping cardiac resynchronization therapy
+therapy crt category
+clinical terms expanded
+systole diastole stroke volume cardiac output
+ejection fraction preload afterload heart rate
+blood pressure systolic diastolic
+pulse pressure mean arterial pressure
+map hypertension primary
+secondary hypotension dyspnea orthopnea
+paroxysmal nocturnal dyspnea pnd edema peripheral
+peripheral pulmonary jugular venous distension jvm lumbar
+jvd murmur systolic
+diastolic gallop rhythm s3 s4 palpitation
+palpitations cyanosis clubbing chest pain
+chest pain anginal nonanginal
+claudication syncope presyncope
+lightheadedness fatigue weakness
+dizziness vertigo orthostatic intolerance pulsus paris
+pulsus paradoxus pulsus alternans cusmals sign
+smalls sign becks triad
+hows triad oslers nodes janeway lesions rothspot
+rothspots splinter hemorrhages waterhammer pulse
+ or pulse
+corrigans pulse capillary refill time central venous pressure
+ venous pressure
+cvp
+pcwp cardiac index c systemic vascular
+systemic vascular resistance svr pulmonary vascular
+thank you
+pvr oxygen saturation spo2 mixed
+2 mixed venus oxygen saturation 
+"""
 
 print("English WER: ", wer(reference, hypothesis))
 print("#"*10)
+

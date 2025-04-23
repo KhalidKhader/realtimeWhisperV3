@@ -46,7 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger("realtime_transcribe")
 
 # Constants
-DEFAULT_LANGUAGE = "english"  # Default language, can be overridden
+DEFAULT_LANGUAGE = "en"  # Default language (ISO code), can be overridden
 
 class AudioBuffer:
     """Enhanced audio buffer with voice activity detection."""
@@ -143,10 +143,11 @@ class RealTimeTranscriber:
             "sample_rate": 16000,
             "chunk_size": 4000,  # 250ms chunks (4x larger than original)
             "buffer_size": 30,    # 30 seconds buffer for processing context
-            "silence_threshold": 0.01,
-            "min_voice_duration": 0.5,  # seconds
+            "silence_threshold": 0.02,      # stricter VAD energy threshold
+            "min_voice_duration": 1.0,      # require at least 1s of speech
             "min_silence_duration": 0.5,  # seconds
             "language": DEFAULT_LANGUAGE,
+            "no_speech_threshold": 0.8,    # higher to reduce idle transcripts
             "use_cuda": torch.cuda.is_available(),
             "num_threads": min(4, os.cpu_count() or 1)
         }
@@ -235,11 +236,12 @@ class RealTimeTranscriber:
                 model=self.model,
                 tokenizer=self.processor.tokenizer,
                 feature_extractor=self.processor.feature_extractor,
-                torch_dtype=self.torch_dtype,  # Don't pass device
-                chunk_length_s=30,
-                stride_length_s=5,
+                torch_dtype=self.torch_dtype,
+                chunk_length_s=10,        # shorter chunks for lower latency
+                stride_length_s=2,        # tighter stride for transition capture
                 batch_size=1,
-                return_timestamps=True
+                return_timestamps=True,
+                return_language=True      # retrieve detected language
             )
             
             logger.info("Whisper model loaded successfully")
@@ -275,7 +277,7 @@ class RealTimeTranscriber:
             logger.info("NeMo diarization models loaded successfully")
             
             # Initialize speaker clustering parameters
-            self.speaker_similarity_threshold = 0.75  # Threshold for same speaker
+            self.speaker_similarity_threshold = 0.85  # Stricter threshold for speaker clustering
             
             # Pre-initialize speaker database if available
             self.speaker_embeddings = []  # [(speaker_id, embedding)]
@@ -627,8 +629,19 @@ class RealTimeTranscriber:
             if len(audio_np) < 800:  # Skip very short segments
                 return None
             
-            # Transcribe with optimized settings
-            result = self.whisper_pipe(audio_np)
+            # Transcribe with optimized settings (with speech/no-speech threshold)
+            result = self.whisper_pipe(
+                audio_np,
+                generate_kwargs={
+                    "task": "transcribe",
+                    "language": self.config["language"],
+                    "temperature": 0.0,
+                    "compression_ratio_threshold": 2.0,
+                    "logprob_threshold": -0.5,
+                    "no_speech_threshold": self.config["no_speech_threshold"],
+                    "max_new_tokens": 256
+                }
+            )
             
             # Extract text
             if "text" in result:
@@ -793,18 +806,19 @@ class RealTimeTranscriber:
         print("===========================\n")
 
 if __name__ == "__main__":
-    # Configuration can be overridden
+    # Configuration (best-practice thresholds)
     config = {
-        "language": DEFAULT_LANGUAGE,  # Auto-detect language
-        "chunk_size": 4000,  # 250ms chunks (4x original size)
+        "language": DEFAULT_LANGUAGE,       # ISO code or auto-detect
+        "chunk_size": 4000,                 # Samples per buffer
         "sample_rate": 16000,
         "use_cuda": torch.cuda.is_available(),
         "num_threads": min(4, os.cpu_count() or 1),
-        "silence_threshold": 0.01,
-        "min_voice_duration": 0.5,
-        "min_silence_duration": 0.5
+        "silence_threshold": 0.02,          # Stricter VAD energy threshold
+        "min_voice_duration": 1.0,          # Require at least 1s of speech
+        "min_silence_duration": 0.5,
+        "no_speech_threshold": 0.8          # Higher to suppress idle transcripts
     }
     
-    # Create and start transcriber
+    # Create and start the transcriber
     transcriber = RealTimeTranscriber(config)
     transcriber.start()
