@@ -13,6 +13,7 @@ It combines OpenAI Whisper v3 Large for speech recognition with NVIDIA NeMo (and
 - **Doctor/patient role identification** using ML-based classification.
 - **Multi-threaded pipeline** for VAD, diarization, transcription, and output.
 - **GPU acceleration** (CUDA/MPS) to maximize throughput.
+- **Ambient noise auto-calibration** at startup to adapt VAD thresholds to your room's noise floor
 - **Configurable parameters** including chunk size, silence thresholds, and language.
 
 ---
@@ -72,7 +73,10 @@ config = {
     "num_threads": 4,          # Number of threads for processing
     "silence_threshold": 0.01, # VAD energy threshold
     "min_voice_duration": 0.5, # Minimum speech segment (seconds)
-    "min_silence_duration": 0.5
+    "min_silence_duration": 0.5, # Minimum silence to split segments
+    # Ambient noise calibration parameters:
+    "calibration_duration": 2.0,  # seconds to record ambient noise at startup
+    "calibration_factor": 1.5,    # multiplier for ambient noise RMS to set silence_threshold
 }
 ```
 

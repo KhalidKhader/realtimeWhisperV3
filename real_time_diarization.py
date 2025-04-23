@@ -143,15 +143,26 @@ class RealTimeTranscriber:
             "sample_rate": 16000,
             "chunk_size": 4000,        # 250ms chunks
             "buffer_size": 30,         # 30s context buffer
-            "silence_threshold": 0.02, # VAD energy threshold
-            "min_voice_duration": 1.5, # require at least 1.5s of speech
-            "min_silence_duration": 1.0,# require 1s silence to split segments
+            "silence_threshold": 0.005, # VAD energy threshold (more sensitive)
+            "calibration_duration": 2.0, # seconds to record ambient noise at startup
+            "calibration_factor": 1.5,   # multiplier for ambient noise RMS to set silence_threshold
+            "min_voice_duration": 0.2,   # allow shorter utterances to pass
+            "min_silence_duration": 0.1, # split on shorter silences
             "no_speech_threshold": 0.85,
             "language": DEFAULT_LANGUAGE,
             "use_cuda": torch.cuda.is_available(),
             "num_threads": min(4, os.cpu_count() or 1),
             "simple_diarization": False,  # disable simple alternating speaker diarization
             "speaker_similarity_threshold": 0.75,  # similarity threshold for clustering speakers
+            "capture_all_speech": False,  # capture all voices without domain filtering
+            "blocked_phrases": [
+                "thank you for watching",
+                "sous-titrage société radio-canada",
+                "takk for att du så på",
+                "terima kasih telah menonton",
+                "subtitled by",
+                "captions",
+            ],
         }
         
         # Override defaults with provided config
@@ -578,61 +589,62 @@ class RealTimeTranscriber:
     def transcription_thread(self):
         """Transcription processing thread."""
         logger.info("Transcription thread started")
-        
-        try:
-            while self.is_running:
-                # Get diarized segment
-                try:
-                    segment = self.diarization_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                
-                # Process with Whisper
+        while self.is_running:
+            # Get diarized segment
+            try:
+                segment = self.diarization_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            try:
+                # Run Whisper transcription
                 transcription = self.transcribe_audio(segment["audio"])
-                
-                if transcription and transcription.strip():
-                    # Suppress any transcript seen earlier in this session
-                    if transcription in self.seen_texts:
-                        self.diarization_queue.task_done()
-                        continue
-                    self.seen_texts.add(transcription)
-                    # Suppress duplicate transcripts
-                    if self.transcript_history and transcription.strip() == self.transcript_history[-1]["text"]:
-                        self.diarization_queue.task_done()
-                        continue
-                    
-                    # Identify role (doctor/patient)
-                    speaker_role = self.classify_speaker_role(
-                        transcription,
-                        segment["speaker_id"]
+
+                if not transcription or not transcription.strip():
+                    continue
+
+                # Filter out blocked phrases
+                if any(
+                    phrase.lower() in transcription.lower()
+                    for phrase in self.config.get("blocked_phrases", [])
+                ):
+                    logger.info(f"Skipping blocked phrase in transcript: {transcription}")
+                    continue
+
+                # Suppress seen or duplicate transcripts
+                if transcription in self.seen_texts or (
+                    self.transcript_history and transcription == self.transcript_history[-1]["text"]
+                ):
+                    continue
+                self.seen_texts.add(transcription)
+
+                # Determine speaker role
+                speaker_role = self.classify_speaker_role(
+                    transcription, segment["speaker_id"]
+                )
+                if speaker_role is None:
+                    continue
+
+                # Build and queue result
+                result = {
+                    "speaker_id": segment["speaker_id"],
+                    "role": speaker_role,
+                    "text": transcription,
+                    "timestamp": segment["timestamp"]
+                }
+                if segment["speaker_id"] not in self.speakers:
+                    self.speakers[segment["speaker_id"]] = SpeakerProfile(
+                        id=segment["speaker_id"],
+                        embedding=segment["embedding"],
+                        role=speaker_role
                     )
-                    
-                    # Store result
-                    result = {
-                        "speaker_id": segment["speaker_id"],
-                        "role": speaker_role,
-                        "text": transcription,
-                        "timestamp": segment["timestamp"]
-                    }
-                    
-                    # Update speaker profile if needed
-                    if segment["speaker_id"] not in self.speakers:
-                        self.speakers[segment["speaker_id"]] = SpeakerProfile(
-                            id=segment["speaker_id"],
-                            embedding=segment["embedding"],
-                            role=speaker_role
-                        )
-                    
-                    # Add to transcript history
-                    self.transcript_history.append(result)
-                    
-                    # Queue for output
-                    self.output_queue.put(result)
-                
+                self.transcript_history.append(result)
+                self.output_queue.put(result)
+            except Exception as e:
+                logger.error(f"Transcription error: {e}")
+            finally:
+                # Mark the segment as processed exactly once
                 self.diarization_queue.task_done()
-                
-        except Exception as e:
-            logger.error(f"Transcription error: {e}")
     
     def transcribe_audio(self, audio_segment):
         """Transcribe audio using Whisper large-v3."""
@@ -657,7 +669,6 @@ class RealTimeTranscriber:
                 audio_np,
                 generate_kwargs={
                     "task": "transcribe",
-                    "language": self.config["language"],
                     "temperature": 0.0,
                     "compression_ratio_threshold": 1.5,  # more repetition filtering
                     "logprob_threshold": 0.0,            # require non-negative logprob
@@ -680,9 +691,6 @@ class RealTimeTranscriber:
 
             if "text" in result:
                 text = result["text"].strip()
-                # Skip if fewer than 3 words
-                if len(text.split()) < 3:
-                    return None
                 return text
             return None
             
@@ -704,7 +712,9 @@ class RealTimeTranscriber:
             "diagnos", "treatment", "prescri", "recommend", "examin", 
             "your condition", "your symptoms", "medical history", "allergies",
             "any pain", "how are you feeling", "follow up", "test results",
-            "what brings you", "your medications", "your health", "i'll recommend"
+            "what brings you", "your medications", "your health", "i'll recommend",
+            # broader medical terms for domain-specific segments
+            "medical", "specialties", "category", "general practitioner", "family medicine", "cardiology"
         ]
         
         # Patient indicators (personal symptoms, feelings, questions)
@@ -718,6 +728,11 @@ class RealTimeTranscriber:
         # Count matches
         doctor_score = sum(1 for term in doctor_indicators if term in text_lower)
         patient_score = sum(1 for term in patient_indicators if term in text_lower)
+        
+        # Optionally skip transcripts with no domain-specific keywords
+        if not self.config.get("capture_all_speech", False):
+            if doctor_score == 0 and patient_score == 0:
+                return None
         
         # Check context from history
         if len(self.transcript_history) > 0:
@@ -769,10 +784,43 @@ class RealTimeTranscriber:
         except Exception as e:
             logger.error(f"Output error: {e}")
     
+    def calibrate_ambient_noise(self):
+        """Record ambient noise for calibration_duration and adjust silence_threshold."""
+        duration = self.config.get("calibration_duration", 0.0)
+        factor = self.config.get("calibration_factor", 1.0)
+        if duration <= 0:
+            return
+        logger.info(f"Calibrating ambient noise for {duration}s...")
+        p = pyaudio.PyAudio()
+        stream = p.open(
+            format=pyaudio.paFloat32,
+            channels=1,
+            rate=self.sample_rate,
+            input=True,
+            frames_per_buffer=self.chunk_size
+        )
+        frames = []
+        n_chunks = int(self.sample_rate * duration / self.chunk_size)
+        for _ in range(n_chunks):
+            data = stream.read(self.chunk_size, exception_on_overflow=False)
+            audio_chunk = np.frombuffer(data, dtype=np.float32)
+            frames.append(audio_chunk)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        ambient_audio = np.concatenate(frames) if frames else np.array([], dtype=np.float32)
+        rms = np.sqrt(np.mean(ambient_audio**2)) if ambient_audio.size > 0 else 0.0
+        new_thresh = rms * factor
+        self.config["silence_threshold"] = float(new_thresh)
+        logger.info(f"Ambient RMS={rms:.6f}, setting silence_threshold={new_thresh:.6f}")
+    
     def start(self):
         """Start the enhanced real-time transcription system."""
         logger.info("Starting enhanced real-time transcription system")
         
+        # Perform ambient noise calibration if configured
+        self.calibrate_ambient_noise()
+
         # Initialize state
         self.is_running = True
         self.start_time = time.time()
@@ -849,12 +897,21 @@ if __name__ == "__main__":
         "sample_rate": 16000,
         "use_cuda": torch.cuda.is_available(),
         "num_threads": min(4, os.cpu_count() or 1),
-        "silence_threshold": 0.03,
-        "min_voice_duration": 2.0,
-        "min_silence_duration": 1.0,
+        "silence_threshold": 0.005,
+        "min_voice_duration": 0.2,
+        "min_silence_duration": 0.1,
         "no_speech_threshold": 0.85,
         "simple_diarization": False,
-        "speaker_similarity_threshold": 0.75
+        "speaker_similarity_threshold": 0.75,
+        "capture_all_speech": True,  # capture all voices in main run
+        "blocked_phrases": [
+            "thank you for watching",
+            "sous-titrage société radio-canada",
+            "takk for att du så på",
+            "terima kasih telah menonton",
+            "subtitled by",
+            "captions",
+        ],
     }
     
     # Create and start the transcriber
