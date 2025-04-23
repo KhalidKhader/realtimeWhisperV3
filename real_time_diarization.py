@@ -138,18 +138,20 @@ class SpeakerProfile:
 
 class RealTimeTranscriber:
     def __init__(self, config=None):
-        # Default configuration
+        # Default configuration thresholds tuned for clarity
         default_config = {
             "sample_rate": 16000,
-            "chunk_size": 4000,  # 250ms chunks (4x larger than original)
-            "buffer_size": 30,    # 30 seconds buffer for processing context
-            "silence_threshold": 0.02,      # stricter VAD energy threshold
-            "min_voice_duration": 1.0,      # require at least 1s of speech
-            "min_silence_duration": 0.5,  # seconds
+            "chunk_size": 4000,        # 250ms chunks
+            "buffer_size": 30,         # 30s context buffer
+            "silence_threshold": 0.02, # VAD energy threshold
+            "min_voice_duration": 1.5, # require at least 1.5s of speech
+            "min_silence_duration": 1.0,# require 1s silence to split segments
+            "no_speech_threshold": 0.85,
             "language": DEFAULT_LANGUAGE,
-            "no_speech_threshold": 0.8,    # higher to reduce idle transcripts
             "use_cuda": torch.cuda.is_available(),
-            "num_threads": min(4, os.cpu_count() or 1)
+            "num_threads": min(4, os.cpu_count() or 1),
+            "simple_diarization": False,  # disable simple alternating speaker diarization
+            "speaker_similarity_threshold": 0.75,  # similarity threshold for clustering speakers
         }
         
         # Override defaults with provided config
@@ -185,6 +187,8 @@ class RealTimeTranscriber:
         self.speakers = {}  # Dict of SpeakerProfile objects
         self.current_speaker = None
         self.transcript_history = []
+        # Track seen transcripts to suppress repeats in a session
+        self.seen_texts = set()
         
         # Session state
         self.is_running = False
@@ -221,7 +225,7 @@ class RealTimeTranscriber:
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_id,
                 torch_dtype=self.torch_dtype,
-                attn_implementation="sdpa",  # Use SDPA for faster attention
+                attn_implementation="sdpa",
                 low_cpu_mem_usage=True,
                 use_safetensors=True
             )
@@ -237,11 +241,11 @@ class RealTimeTranscriber:
                 tokenizer=self.processor.tokenizer,
                 feature_extractor=self.processor.feature_extractor,
                 torch_dtype=self.torch_dtype,
-                chunk_length_s=10,        # shorter chunks for lower latency
-                stride_length_s=2,        # tighter stride for transition capture
+                chunk_length_s=10,         # 10s chunk for robust context
+                stride_length_s=2,         # 2s overlap for smooth segment transitions
                 batch_size=1,
                 return_timestamps=True,
-                return_language=True      # retrieve detected language
+                return_language=True
             )
             
             logger.info("Whisper model loaded successfully")
@@ -276,12 +280,9 @@ class RealTimeTranscriber:
             
             logger.info("NeMo diarization models loaded successfully")
             
-            # Initialize speaker clustering parameters
-            self.speaker_similarity_threshold = 0.85  # Stricter threshold for speaker clustering
-            
-            # Pre-initialize speaker database if available
-            self.speaker_embeddings = []  # [(speaker_id, embedding)]
-            self.speaker_ids = []  # Keep track of speaker IDs
+            # simple_diarization enabled; skip clustering threshold
+            self.speaker_embeddings = []
+            self.speaker_ids = []
             self.use_nemo = True
             
         except Exception as e:
@@ -495,6 +496,14 @@ class RealTimeTranscriber:
     def identify_speaker(self, audio_segment):
         """Identify speaker using NeMo speaker embeddings."""
         try:
+            # Simple alternating diarization
+            if self.config.get("simple_diarization", False):
+                if not self.current_speaker:
+                    self.current_speaker = "speaker_0"
+                else:
+                    self.current_speaker = "speaker_1" if self.current_speaker == "speaker_0" else "speaker_0"
+                return self.current_speaker, None
+
             if self.use_nemo:
                 # Create temporary file for NeMo processing
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp_file:
@@ -525,7 +534,7 @@ class RealTimeTranscriber:
                     similarities.append(sim)
                 
                 max_sim = max(similarities)
-                if max_sim > self.speaker_similarity_threshold:
+                if max_sim > self.config["speaker_similarity_threshold"]:
                     # Existing speaker
                     speaker_idx = similarities.index(max_sim)
                     speaker_id = self.speaker_ids[speaker_idx]
@@ -582,9 +591,19 @@ class RealTimeTranscriber:
                 transcription = self.transcribe_audio(segment["audio"])
                 
                 if transcription and transcription.strip():
+                    # Suppress any transcript seen earlier in this session
+                    if transcription in self.seen_texts:
+                        self.diarization_queue.task_done()
+                        continue
+                    self.seen_texts.add(transcription)
+                    # Suppress duplicate transcripts
+                    if self.transcript_history and transcription.strip() == self.transcript_history[-1]["text"]:
+                        self.diarization_queue.task_done()
+                        continue
+                    
                     # Identify role (doctor/patient)
                     speaker_role = self.classify_speaker_role(
-                        transcription, 
+                        transcription,
                         segment["speaker_id"]
                     )
                     
@@ -618,35 +637,52 @@ class RealTimeTranscriber:
     def transcribe_audio(self, audio_segment):
         """Transcribe audio using Whisper large-v3."""
         try:
-            # Convert to numpy array
             audio_np = audio_segment.astype(np.float32)
-            
-            # Normalize if needed
+            # Normalize
             if np.max(np.abs(audio_np)) > 0:
                 audio_np = audio_np / np.max(np.abs(audio_np))
-            
-            # Skip empty audio
-            if len(audio_np) < 800:  # Skip very short segments
+            # Enforce minimum segment duration
+            duration = len(audio_np) / self.sample_rate
+            if duration < self.config.get("min_voice_duration", 1.0):
                 return None
-            
-            # Transcribe with optimized settings (with speech/no-speech threshold)
+            # Skip very short arrays
+            if len(audio_np) < 800:
+                return None
+            # VAD energy filter
+            rms = np.sqrt(np.mean(audio_np**2))
+            if rms < self.config["silence_threshold"]:
+                return None
+
             result = self.whisper_pipe(
                 audio_np,
                 generate_kwargs={
                     "task": "transcribe",
                     "language": self.config["language"],
                     "temperature": 0.0,
-                    "compression_ratio_threshold": 2.0,
-                    "logprob_threshold": -0.5,
+                    "compression_ratio_threshold": 1.5,  # more repetition filtering
+                    "logprob_threshold": 0.0,            # require non-negative logprob
                     "no_speech_threshold": self.config["no_speech_threshold"],
+                    "num_beams": 3,                      # beam search for accuracy
                     "max_new_tokens": 256
                 }
             )
-            
-            # Extract text
+
+            # Ignore transcripts in languages other than the configured one
+            if "language" in result:
+                detected = result["language"]
+                if isinstance(detected, dict):
+                    code = detected.get("language", detected.get("lang", None))
+                else:
+                    code = detected
+                if code != self.config["language"]:
+                    logger.info(f"Ignoring transcript in language: {code}")
+                    return None
+
             if "text" in result:
-                # Clean up text
                 text = result["text"].strip()
+                # Skip if fewer than 3 words
+                if len(text.split()) < 3:
+                    return None
                 return text
             return None
             
@@ -808,15 +844,17 @@ class RealTimeTranscriber:
 if __name__ == "__main__":
     # Configuration (best-practice thresholds)
     config = {
-        "language": DEFAULT_LANGUAGE,       # ISO code or auto-detect
-        "chunk_size": 4000,                 # Samples per buffer
+        "language": DEFAULT_LANGUAGE,
+        "chunk_size": 4000,
         "sample_rate": 16000,
         "use_cuda": torch.cuda.is_available(),
         "num_threads": min(4, os.cpu_count() or 1),
-        "silence_threshold": 0.02,          # Stricter VAD energy threshold
-        "min_voice_duration": 1.0,          # Require at least 1s of speech
-        "min_silence_duration": 0.5,
-        "no_speech_threshold": 0.8          # Higher to suppress idle transcripts
+        "silence_threshold": 0.03,
+        "min_voice_duration": 2.0,
+        "min_silence_duration": 1.0,
+        "no_speech_threshold": 0.85,
+        "simple_diarization": False,
+        "speaker_similarity_threshold": 0.75
     }
     
     # Create and start the transcriber

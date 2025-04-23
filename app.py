@@ -17,6 +17,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # Determine language from query parameters (default to DEFAULT_LANGUAGE)
     language = websocket.query_params.get("lang", DEFAULT_LANGUAGE)
+    print(f"WebSocket connection accepted, language={language}")
     logger.info(f"WebSocket connection accepted, language={language}")
     # Initialize transcriber with selected language
     transcriber = RealTimeTranscriber(config={"language": language})
@@ -34,7 +35,11 @@ async def websocket_endpoint(websocket: WebSocket):
         threads.append(t)
 
     # Notify client that models are initialized and ready
-    await websocket.send_json({"type": "ready"})
+    try:
+        await websocket.send_json({"type": "ready"})
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected before models ready")
+        return
     # Background task to send transcription results
     async def send_loop():
         while transcriber.is_running:
