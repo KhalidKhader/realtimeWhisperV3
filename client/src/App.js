@@ -102,6 +102,7 @@ function App() {
             <option value="es">Spanish</option>
             <option value="fr">French</option>
             <option value="de">German</option>
+            <option value="ar">Arabic</option>
             <option value="auto">Auto Detect</option>
           </select>
         </label>

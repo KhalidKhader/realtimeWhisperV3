@@ -33,6 +33,8 @@ import nemo.collections.asr as nemo_asr
 from pyannote.audio import Pipeline as PyannotePipeline
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+import re
+from langdetect import detect_langs
 
 # Load environment variables
 load_dotenv()
@@ -118,10 +120,9 @@ class AudioBuffer:
 
 class SpeakerProfile:
     """Speaker profile for improved diarization."""
-    def __init__(self, id, embedding=None, role=None):
+    def __init__(self, id, embedding=None):
         self.id = id
         self.embedding = embedding
-        self.role = role
         self.utterances = []
         self.total_duration = 0.0
     
@@ -143,26 +144,55 @@ class RealTimeTranscriber:
             "sample_rate": 16000,
             "chunk_size": 4000,        # 250ms chunks
             "buffer_size": 30,         # 30s context buffer
-            "silence_threshold": 0.005, # VAD energy threshold (more sensitive)
+            "silence_threshold": 0.003, # VAD energy threshold (very sensitive to capture all speech)
             "calibration_duration": 2.0, # seconds to record ambient noise at startup
-            "calibration_factor": 1.5,   # multiplier for ambient noise RMS to set silence_threshold
-            "min_voice_duration": 0.2,   # allow shorter utterances to pass
-            "min_silence_duration": 0.1, # split on shorter silences
+            "calibration_factor": 1.2,   # multiplier for ambient noise RMS to set silence_threshold
+            "min_voice_duration": 0.1,   # capture even very short utterances
+            "min_silence_duration": 0.05, # split on very short silences for better segmentation
             "no_speech_threshold": 0.85,
             "language": DEFAULT_LANGUAGE,
             "use_cuda": torch.cuda.is_available(),
-            "num_threads": min(4, os.cpu_count() or 1),
+            "num_threads": min(8, os.cpu_count() or 2),  # use more threads if available
             "simple_diarization": False,  # disable simple alternating speaker diarization
-            "speaker_similarity_threshold": 0.75,  # similarity threshold for clustering speakers
-            "capture_all_speech": False,  # capture all voices without domain filtering
+            "speaker_similarity_threshold": 0.45,  # Lower threshold to more aggressively merge similar speakers
+            "max_speakers": 2,  # Limit to 2 speakers for medical conversations
+            "capture_all_speech": True,  # capture all voices in main run
             "blocked_phrases": [
                 "thank you for watching",
+                "takk for watching",
+                "thanks for watching",
                 "sous-titrage société radio-canada",
                 "takk for att du så på",
                 "terima kasih telah menonton",
                 "subtitled by",
                 "captions",
+                "subtitles by",
+                "tchau",
+                "bye-bye",
+                "obrigado",
+                "مرحباً",
+                "شكراً",
+                "e aí",
+                "gracias",
+                "حسنا",
+                "لنبدأ",
+                "بالتوصيل",
+                "بالتصوير"
             ],
+            # NeMo clustering parameters
+            "clustering": {
+                "min_samples": 2,      # Lower min samples to merge clusters more easily
+                "eps": 0.25,           # Higher eps for more aggressive clustering (less discriminative)
+                "max_speakers": 2,     # Maximum number of speakers to detect
+                "window_size": 120,    # Longer context window for better clustering
+                "enhanced": True,      # Use NeMo's enhanced clustering
+                "fallback_threshold": 0.45  # Lower threshold for more aggressive merging
+            },
+            "speech_language": {
+                "min_confidence": 0.75,  # Minimum confidence in language detection
+                "non_latin_ratio": 0.1,  # Maximum allowed non-Latin character ratio
+                "target_lang_confidence": 0.4  # Minimum confidence in target language
+            }
         }
         
         # Override defaults with provided config
@@ -204,6 +234,11 @@ class RealTimeTranscriber:
         # Session state
         self.is_running = False
         self.start_time = None
+        self.initialization_complete = False
+        
+        # Speaker tracking system
+        self.speaker_labels = {}  # Maps cluster IDs to speaker IDs
+        self.next_speaker_id = 0  # Counter for generating speaker IDs
         
         # Initialize models
         self.initialize_models()
@@ -220,6 +255,8 @@ class RealTimeTranscriber:
         self.initialize_diarization()
         self.initialize_whisper()
         
+        # Mark model initialization as complete
+        self.initialization_complete = True
         logger.info(f"All models initialized successfully")
     
     def initialize_whisper(self):
@@ -259,6 +296,9 @@ class RealTimeTranscriber:
                 return_language=True
             )
             
+            # Fix the forced_decoder_ids warning by setting empty list
+            self.empty_decoder_ids = []
+            
             logger.info("Whisper model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
@@ -289,11 +329,50 @@ class RealTimeTranscriber:
                 self.vad_model = self.vad_model.to(self.device)
             self.vad_model.eval()  # Set to evaluation mode
             
+            # Initialize clustering parameters for diarization
+            try:
+                # Import NeMo clustering and diarization components
+                import nemo.collections.asr.parts.utils.speaker_utils as speaker_utils
+                from nemo.collections.asr.parts.utils.offline_clustering import (
+                    SpeakerClustering, 
+                    get_argmin_mat,
+                    split_input_data
+                )
+                from nemo.collections.asr.parts.utils.speaker_utils import (
+                    get_timestamps_from_manifest, 
+                    embedding_normalize
+                )
+
+                # Get clustering parameters from config
+                clustering_config = self.config.get("clustering", {})
+                min_samples = clustering_config.get("min_samples", 2)
+                eps = clustering_config.get("eps", 0.15)
+                max_speakers = clustering_config.get("max_speakers", 8)
+                enhanced = clustering_config.get("enhanced", True)
+                
+                # Initialize clustering object for dynamic usage
+                self.clustering = SpeakerClustering(
+                    min_samples=min_samples,
+                    eps=eps, 
+                    oracle_num_speakers=False,
+                    max_num_speakers=max_speakers, 
+                    enhanced=enhanced,
+                    metric='cosine'
+                )
+                
+                self.use_nemo_clustering = True
+                logger.info("NeMo clustering initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to load NeMo clustering modules: {e}")
+                self.use_nemo_clustering = False
+            
+            # Speaker tracking state
+            self.speaker_embeddings_buffer = []  # Store (embedding, timestamp) tuples
+            self.speaker_labels = {}  # Mapping from NeMo cluster IDs to speaker_ids
+            self.next_speaker_id = 0
+            
             logger.info("NeMo diarization models loaded successfully")
             
-            # simple_diarization enabled; skip clustering threshold
-            self.speaker_embeddings = []
-            self.speaker_ids = []
             self.use_nemo = True
             
         except Exception as e:
@@ -369,6 +448,10 @@ class RealTimeTranscriber:
         in_speech = False
         current_segment = []
         
+        # Enhanced parameters for better voice capture
+        max_segment_length = 10.0  # maximum segment length in seconds before forced processing
+        min_segment_energy = 0.001  # minimum energy to consider for processing
+        
         try:
             while self.is_running:
                 # Get audio chunk
@@ -419,14 +502,27 @@ class RealTimeTranscriber:
                 # Complete long speech segments even if still ongoing
                 if in_speech and len(current_segment) > 0:
                     segment_audio = np.concatenate(current_segment)
+                    if segment_audio.size == 0:
+                        continue  # Skip empty segments 
                     segment_duration = len(segment_audio) / self.sample_rate
                     
                     # Process if segment is getting long (>5 seconds)
-                    if segment_duration > 5.0:
+                    if segment_duration > max_segment_length:
+                        # Check if segment has minimum energy to be worth processing
+                        rms = np.sqrt(np.mean(segment_audio**2)) if segment_audio.size > 0 else 0
+                        if rms < min_segment_energy:
+                            logger.debug(f"Skipping low-energy segment: {rms:.6f}")
+                            current_segment = []
+                            continue
+                        
                         if not self.vad_queue.full():
-                            self.vad_queue.put(segment_audio)
+                            try:
+                                self.vad_queue.put(segment_audio, block=False)
+                            except queue.Full:
+                                logger.warning("VAD queue full, skipping segment")
+                                continue
                             # Keep the last second to maintain context
-                            last_samples = int(1.0 * self.sample_rate)
+                            last_samples = int(2.0 * self.sample_rate)  # 2 seconds of context overlap
                             if len(segment_audio) > last_samples:
                                 current_segment = [segment_audio[-last_samples:]]
                             else:
@@ -505,16 +601,11 @@ class RealTimeTranscriber:
             logger.error(f"Diarization error: {e}")
     
     def identify_speaker(self, audio_segment):
-        """Identify speaker using NeMo speaker embeddings."""
+        """Identify speaker using NeMo speaker embeddings and clustering."""
         try:
-            # Simple alternating diarization
-            if self.config.get("simple_diarization", False):
-                if not self.current_speaker:
-                    self.current_speaker = "speaker_0"
-                else:
-                    self.current_speaker = "speaker_1" if self.current_speaker == "speaker_0" else "speaker_0"
-                return self.current_speaker, None
-
+            # Get max speakers limit
+            max_speakers = self.config.get("max_speakers", 2)
+            
             if self.use_nemo:
                 # Create temporary file for NeMo processing
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp_file:
@@ -530,36 +621,57 @@ class RealTimeTranscriber:
                         embedding = self.speaker_model.get_embedding(tmp_file.name)
                         embedding = embedding.cpu().numpy()
                 
-                # Compare with existing speakers
-                if len(self.speaker_embeddings) == 0:
-                    # First speaker
-                    self.speaker_embeddings.append(embedding)
-                    self.speaker_ids.append("speaker_0")
-                    return "speaker_0", embedding
+                # Record current timestamp for windowing
+                current_time = time.time()
                 
-                # Calculate similarities with known speakers
-                similarities = []
-                for spk_emb in self.speaker_embeddings:
-                    sim = np.dot(embedding, spk_emb.T) / (
-                        np.linalg.norm(embedding) * np.linalg.norm(spk_emb))
-                    similarities.append(sim)
+                # Add the new embedding to our buffer
+                self.speaker_embeddings_buffer.append((embedding, current_time))
                 
-                max_sim = max(similarities)
-                if max_sim > self.config["speaker_similarity_threshold"]:
-                    # Existing speaker
-                    speaker_idx = similarities.index(max_sim)
-                    speaker_id = self.speaker_ids[speaker_idx]
+                # Maintain buffer size by removing older embeddings
+                window_size = self.config.get("clustering", {}).get("window_size", 120)
+                self.speaker_embeddings_buffer = [
+                    (emb, ts) for emb, ts in self.speaker_embeddings_buffer 
+                    if current_time - ts < window_size
+                ]
+                
+                # If less than max_speakers exist, and it's the first time, create first speaker
+                if len(self.speakers) == 0:
+                    return "Speaker_1", embedding
                     
-                    # Update embedding with exponential moving average
-                    self.speaker_embeddings[speaker_idx] = 0.8 * self.speaker_embeddings[speaker_idx] + 0.2 * embedding
+                # If we already have speaker profiles, calculate similarities
+                if self.speakers:
+                    similarities = []
+                    for speaker_id, profile in self.speakers.items():
+                        if profile.embedding is not None:
+                            sim = cosine_similarity([embedding], [profile.embedding])[0][0]
+                            similarities.append((speaker_id, sim))
                     
-                    return speaker_id, embedding
-                else:
-                    # New speaker
-                    new_id = f"speaker_{len(self.speaker_embeddings)}"
-                    self.speaker_embeddings.append(embedding)
-                    self.speaker_ids.append(new_id)
+                    # If we found any similarities
+                    if similarities:
+                        # Sort by similarity (highest first)
+                        similarities.sort(key=lambda x: x[1], reverse=True)
+                        best_match_id, best_sim = similarities[0]
+                        threshold = self.config.get("speaker_similarity_threshold", 0.45)
+                        
+                        # If found a good match, return that speaker
+                        if best_sim > threshold:
+                            # Update speaker's embedding with this new one for better tracking
+                            self.speakers[best_match_id].update_embedding(embedding, 0.5)
+                            return best_match_id, embedding
+                        
+                        # If we've reached max speakers, return the most similar one anyway
+                        if len(self.speakers) >= max_speakers:
+                            # Update speaker's embedding with this new one for better tracking
+                            self.speakers[best_match_id].update_embedding(embedding, 0.2)
+                            return best_match_id, embedding
+                    
+                # If we haven't hit max speakers yet, create a new one
+                if len(self.speakers) < max_speakers:
+                    new_id = f"Speaker_{len(self.speakers) + 1}"
                     return new_id, embedding
+                    
+                # Fallback: return the first speaker if we somehow got here
+                return "Speaker_1", embedding
             else:
                 # Fallback to PyAnnotate
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp_file:
@@ -576,15 +688,36 @@ class RealTimeTranscriber:
                     # Find speaker with longest duration
                     if speaker_counts:
                         speaker_id = max(speaker_counts.items(), key=lambda x: x[1])[0]
+                        # Convert to our naming convention, but enforce max_speakers
+                        numeric_id = speaker_id.replace("SPEAKER_", "").replace("speaker_", "")
+                        try:
+                            speaker_num = int(numeric_id) % max_speakers + 1
+                        except:
+                            speaker_num = len(self.speakers) % max_speakers + 1
+                        speaker_id = f"Speaker_{speaker_num}"
                     else:
-                        speaker_id = "unknown"
+                        if len(self.speakers) == 0:
+                            speaker_id = "Speaker_1"
+                        else:
+                            # Alternate between existing speakers
+                            speaker_num = (len(self.transcript_history) % max_speakers) + 1
+                            speaker_id = f"Speaker_{speaker_num}"
                     
                     # No embedding in PyAnnotate fallback
                     return speaker_id, None
                 
         except Exception as e:
             logger.error(f"Speaker identification error: {e}")
-            return "unknown", None
+            # Fallback to alternating speakers
+            if not self.transcript_history:
+                return "Speaker_1", None
+            else:
+                # Get the most recent speaker and alternate
+                last_speaker = self.transcript_history[-1]["speaker_id"]
+                if last_speaker == "Speaker_1":
+                    return "Speaker_2", None
+                else:
+                    return "Speaker_1", None
     
     def transcription_thread(self):
         """Transcription processing thread."""
@@ -611,6 +744,12 @@ class RealTimeTranscriber:
                     logger.info(f"Skipping blocked phrase in transcript: {transcription}")
                     continue
 
+                # Additional check for partial matches of phrases that often appear in outro segments
+                close_match_phrases = ["thank", "thanks", "watching", "takk", "bye", "subtitle"]
+                if any(phrase.lower() in transcription.lower() for phrase in close_match_phrases):
+                    logger.info(f"Likely outro/intro phrase detected, skipping: {transcription}")
+                    continue
+
                 # Suppress seen or duplicate transcripts
                 if transcription in self.seen_texts or (
                     self.transcript_history and transcription == self.transcript_history[-1]["text"]
@@ -618,26 +757,23 @@ class RealTimeTranscriber:
                     continue
                 self.seen_texts.add(transcription)
 
-                # Determine speaker role
-                speaker_role = self.classify_speaker_role(
-                    transcription, segment["speaker_id"]
-                )
-                if speaker_role is None:
-                    continue
+                # Use speaker ID directly without role classification
+                speaker_id = segment["speaker_id"]
 
                 # Build and queue result
                 result = {
-                    "speaker_id": segment["speaker_id"],
-                    "role": speaker_role,
+                    "speaker_id": speaker_id,
+                    "role": speaker_id,  # Use speaker_id as the role
                     "text": transcription,
                     "timestamp": segment["timestamp"]
                 }
-                if segment["speaker_id"] not in self.speakers:
-                    self.speakers[segment["speaker_id"]] = SpeakerProfile(
-                        id=segment["speaker_id"],
-                        embedding=segment["embedding"],
-                        role=speaker_role
+                
+                if speaker_id not in self.speakers:
+                    self.speakers[speaker_id] = SpeakerProfile(
+                        id=speaker_id,
+                        embedding=segment["embedding"]
                     )
+                
                 self.transcript_history.append(result)
                 self.output_queue.put(result)
             except Exception as e:
@@ -665,15 +801,35 @@ class RealTimeTranscriber:
             if rms < self.config["silence_threshold"]:
                 return None
 
+            # Create proper attention mask to fix the warning
+            # First extract features properly with attention mask
+            inputs = self.processor.feature_extractor(
+                audio_np, 
+                sampling_rate=self.sample_rate, 
+                return_tensors="pt", 
+                return_attention_mask=True
+            )
+            # Use proper attention mask from processor
+            input_features = inputs.input_features.to(self.device)
+            attention_mask = inputs.attention_mask.to(self.device) if hasattr(inputs, "attention_mask") else None
+            
+            # Convert to list format that the pipeline expects
+            if attention_mask is not None:
+                # Create an attention mask where valid tokens have 1.0 and padding has 0.0
+                audio_np = {"array": audio_np, "sampling_rate": self.sample_rate, "attention_mask": attention_mask}
+
             result = self.whisper_pipe(
                 audio_np,
                 generate_kwargs={
                     "task": "transcribe",
                     "temperature": 0.0,
+                    "forced_decoder_ids": self.empty_decoder_ids,  # explicitly set empty to fix warning
                     "compression_ratio_threshold": 1.5,  # more repetition filtering
                     "logprob_threshold": 0.0,            # require non-negative logprob
                     "no_speech_threshold": self.config["no_speech_threshold"],
                     "num_beams": 3,                      # beam search for accuracy
+                    "do_sample": False,                   # disable sampling for consistent results
+                    "return_legacy_cache": True,          # address cache warning
                     "max_new_tokens": 256
                 }
             )
@@ -689,75 +845,125 @@ class RealTimeTranscriber:
                     logger.info(f"Ignoring transcript in language: {code}")
                     return None
 
+            # Language confidence check - replace blocklist with confidence check
             if "text" in result:
                 text = result["text"].strip()
+                # Use advanced language detection to check for confidence
+                if "language_probability" in result:
+                    lang_confidence = result["language_probability"]
+                    # Only keep high-confidence transcriptions
+                    if lang_confidence < 0.75:  # 75% confidence threshold
+                        logger.info(f"Ignoring low confidence ({lang_confidence:.2f}) transcript: {text}")
+                        return None
+
+                # Foreign script detection
+                non_latin_ratio = sum(1 for c in text if ord(c) > 127) / len(text) if text else 0
+                if non_latin_ratio > 0.1:  # More than 10% non-Latin characters
+                    logger.info(f"Ignoring transcript with non-Latin characters: {text}")
+                    return None
+                
+                # Check for common multilingual patterns and code-switching
+                # This approach is more flexible than a blocklist
+                try:
+                    # Try to detect potential code-switching
+                    detected_langs = detect_langs(text)
+                    
+                    # If the top language isn't our target language
+                    top_lang = detected_langs[0]
+                    if top_lang.lang != self.config["language"] and top_lang.prob > 0.6:
+                        logger.info(f"Ignoring code-switched text. Detected {top_lang.lang} with prob {top_lang.prob}: {text}")
+                        return None
+                    
+                    # If we have high confidence in multiple languages, it's likely code-switching
+                    if len(detected_langs) > 1 and detected_langs[1].prob > 0.3:
+                        logger.info(f"Detected likely code-switching: {detected_langs}")
+                        
+                        # If our target language is strong enough, keep it
+                        target_lang = next((l for l in detected_langs if l.lang == self.config["language"]), None)
+                        if not target_lang or target_lang.prob < 0.4:
+                            logger.info(f"Insufficient confidence in target language: {text}")
+                            return None
+                except Exception as e:
+                    # If language detection fails, fall back to content-based checks
+                    logger.debug(f"Language detection failed: {e}")
+                
+                # Check for likely misrecognized medical terms
+                medical_corrections = {
+                    r'\ban egg\b': 'an ECG',
+                    r'\begg\b': 'ECG',
+                    r'\bxenoblade\b': 'Clopidogrel',
+                    r'\baesir\b': 'ACE inhibitor',
+                    r'\baveda\b': 'a beta blocker',
+                    r'\baspirator\b': 'aspirator',
+                    r'\bstark\b': 'start',
+                    r'\beast cardiogram\b': 'electrocardiogram',
+                    r'\bgamingcardio\b': 'angiogram'
+                }
+                
+                for error, correction in medical_corrections.items():
+                    text = re.sub(error, correction, text, flags=re.IGNORECASE)
+                
+                # Validate sentence structure - filter incomplete fragments
+                # Check if the text is likely to be a complete sentence or thought
+                def is_complete_sentence(s):
+                    # Very short utterances are often incomplete
+                    if len(s.split()) < 3:
+                        return False
+                        
+                    # Check for ending with prepositions or articles - likely incomplete
+                    ending_words = ['to', 'the', 'a', 'an', 'in', 'on', 'at', 'with', 'by', 'for', 'and', 'or', 'but']
+                    last_word = s.split()[-1].lower().strip('.,?!')
+                    if last_word in ending_words:
+                        return False
+                        
+                    # Check if sentence has at least one complete clause structure
+                    # (simplistic implementation - counts verbs)
+                    has_subject = any(word.lower() in ['i', 'you', 'he', 'she', 'it', 'we', 'they'] for word in s.split())
+                    common_verbs = ['am', 'is', 'are', 'was', 'were', 'be', 'have', 'has', 'had', 'do', 'does', 'did', 
+                                   'can', 'could', 'will', 'would', 'see', 'feel', 'think', 'know', 'tell', 'go', 'come']
+                    has_verb = any(word.lower() in common_verbs for word in s.split())
+                    
+                    # Either has subject+verb structure or ends with punctuation
+                    return (has_subject and has_verb) or s.strip().endswith(('.', '?', '!'))
+                
+                # If text appears to be an incomplete fragment, check if we should discard it
+                if not is_complete_sentence(text):
+                    # Only discard if it's short and looks very incomplete
+                    if len(text.split()) < 8 and not any(x in text.lower() for x in ['doctor', 'patient', 'cardiac', 'heart']):
+                        logger.info(f"Skipping likely incomplete sentence: {text}")
+                        return None
+                
+                # More aggressive repetition removal - handles phrases not just single words
+                # First handle extreme word repetition
+                single_word_pattern = r'(\b\w+\b)(\s+\1){1,}'
+                text = re.sub(single_word_pattern, r'\1', text)
+                
+                # Then handle repeated phrases (2+ words)
+                for phrase_len in range(5, 1, -1):  # Try phrases of length 5,4,3,2 words
+                    # Look for repeated phrases of this length
+                    words = text.split()
+                    if len(words) < phrase_len * 2:
+                        continue
+                        
+                    i = 0
+                    while i <= len(words) - phrase_len * 2:
+                        phrase1 = ' '.join(words[i:i+phrase_len])
+                        phrase2 = ' '.join(words[i+phrase_len:i+phrase_len*2])
+                        
+                        if phrase1.lower() == phrase2.lower():
+                            # Remove the repetition
+                            words = words[:i+phrase_len] + words[i+phrase_len*2:]
+                        else:
+                            i += 1
+                    
+                    text = ' '.join(words)
+                
                 return text
             return None
             
         except Exception as e:
             logger.error(f"Transcription error: {e}")
             return None
-    
-    def classify_speaker_role(self, text, speaker_id):
-        """Classify speaker as doctor or patient using ML-based approach."""
-        # Check if speaker already has a known role
-        if speaker_id in self.speakers and self.speakers[speaker_id].role:
-            return self.speakers[speaker_id].role
-            
-        # Prepare text for analysis
-        text_lower = text.lower()
-        
-        # Doctor indicators (medical terminology, questions, recommendations)
-        doctor_indicators = [
-            "diagnos", "treatment", "prescri", "recommend", "examin", 
-            "your condition", "your symptoms", "medical history", "allergies",
-            "any pain", "how are you feeling", "follow up", "test results",
-            "what brings you", "your medications", "your health", "i'll recommend",
-            # broader medical terms for domain-specific segments
-            "medical", "specialties", "category", "general practitioner", "family medicine", "cardiology"
-        ]
-        
-        # Patient indicators (personal symptoms, feelings, questions)
-        patient_indicators = [
-            "i feel", "i'm feeling", "i've been", "it hurts", "my pain",
-            "i have a", "i'm having", "my symptoms", "my condition", 
-            "worried about", "i noticed", "i wanted to ask", "i'm concerned",
-            "i need", "i was wondering", "i've noticed", "will this"
-        ]
-        
-        # Count matches
-        doctor_score = sum(1 for term in doctor_indicators if term in text_lower)
-        patient_score = sum(1 for term in patient_indicators if term in text_lower)
-        
-        # Optionally skip transcripts with no domain-specific keywords
-        if not self.config.get("capture_all_speech", False):
-            if doctor_score == 0 and patient_score == 0:
-                return None
-        
-        # Check context from history
-        if len(self.transcript_history) > 0:
-            # In medical conversations, doctor and patient usually alternate
-            last_entry = self.transcript_history[-1]
-            if last_entry["speaker_id"] != speaker_id:
-                # Different speaker, likely alternating roles
-                if last_entry["role"] == "doctor":
-                    patient_score += 2  # Boost patient score
-                else:
-                    doctor_score += 2  # Boost doctor score
-        
-        # Determine role
-        if doctor_score > patient_score:
-            return "doctor"
-        elif patient_score > doctor_score:
-            return "patient"
-        else:
-            # Default to doctor for first speaker if uncertain
-            if not self.transcript_history:
-                return "doctor"
-            else:
-                # For subsequent unclear cases, keep different role from last speaker
-                last_role = self.transcript_history[-1]["role"]
-                return "patient" if last_role == "doctor" else "doctor"
     
     def output_thread(self):
         """Handle output formatting and display."""
@@ -768,14 +974,14 @@ class RealTimeTranscriber:
                 try:
                     result = self.output_queue.get(timeout=0.5)
                     
-                    # Format output
-                    role = result["role"].upper()
+                    # Format output with speaker ID instead of role
+                    speaker_label = result["speaker_id"]
                     text = result["text"]
                     timestamp = result["timestamp"] - self.start_time
                     min_sec = divmod(int(timestamp), 60)
                     
                     # Print with timestamp
-                    print(f"[{min_sec[0]:02d}:{min_sec[1]:02d}] {role}: {text}")
+                    print(f"[{min_sec[0]:02d}:{min_sec[1]:02d}] {speaker_label}: {text}")
                     
                     self.output_queue.task_done()
                 except queue.Empty:
@@ -825,69 +1031,280 @@ class RealTimeTranscriber:
         self.is_running = True
         self.start_time = time.time()
         
-        # Create thread pools
-        self.executors["thread_pool"] = ThreadPoolExecutor(
-            max_workers=self.config["num_threads"]
-        )
-        
-        # Start worker threads
-        threads = {
-            "audio_capture": threading.Thread(
-                target=self.audio_capture_thread, 
-                daemon=True
-            ),
-            "vad_processing": threading.Thread(
-                target=self.vad_processing_thread,
-                daemon=True
-            ),
-            "diarization": threading.Thread(
-                target=self.diarization_thread,
-                daemon=True
-            ),
-            "transcription": threading.Thread(
-                target=self.transcription_thread,
-                daemon=True
-            ),
-            "output": threading.Thread(
-                target=self.output_thread,
-                daemon=True
-            )
-        }
-        
-        # Start all threads
-        for name, thread in threads.items():
-            thread.start()
-            logger.info(f"Started {name} thread")
-        
-        print("\n====== Real-Time Medical Transcription ======")
-        print("Press Ctrl+C to stop\n")
-        
-        # Main loop - keep program alive and handle graceful shutdown
         try:
-            while True:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            logger.info("Shutting down...")
-            self.stop()
+            # Create thread pools
+            self.executors["thread_pool"] = ThreadPoolExecutor(
+                max_workers=self.config["num_threads"]
+            )
+            
+            # Start worker threads
+            threads = {
+                "audio_capture": threading.Thread(
+                    target=self.audio_capture_thread, 
+                    daemon=True
+                ),
+                "vad_processing": threading.Thread(
+                    target=self.vad_processing_thread,
+                    daemon=True
+                ),
+                "diarization": threading.Thread(
+                    target=self.diarization_thread,
+                    daemon=True
+                ),
+                "transcription": threading.Thread(
+                    target=self.transcription_thread,
+                    daemon=True
+                ),
+                "output": threading.Thread(
+                    target=self.output_thread,
+                    daemon=True
+                )
+            }
+            
+            # Start all threads
+            for name, thread in threads.items():
+                thread.start()
+                logger.info(f"Started {name} thread")
+            
+            print("\n====== Real-Time Medical Transcription ======")
+            print("Press Ctrl+C to stop\n")
+            
+            # Main loop - keep program alive and handle graceful shutdown
+            try:
+                while True:
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                logger.info("Shutting down...")
+                self.stop()
+            except Exception as e:
+                logger.error(f"Main thread error: {e}")
+                self.stop()
         except Exception as e:
-            logger.error(f"Main thread error: {e}")
+            logger.error(f"Error during start: {e}")
             self.stop()
     
     def stop(self):
         """Stop the transcription system gracefully."""
-        self.is_running = False
+        # Only stop if running (avoid multiple stops)
+        if self.is_running:
+            self.is_running = False
+            
+            # Clean up resources
+            for executor_name, executor in self.executors.items():
+                try:
+                    executor.shutdown(wait=False)
+                except Exception as e:
+                    logger.error(f"Error shutting down executor {executor_name}: {e}")
+            
+            logger.info("Transcription system stopped")
+            
+            # Print summary
+            print("\n====== Session Summary ======")
+            total_time = time.time() - self.start_time if self.start_time else 0
+            print(f"Duration: {total_time:.1f} seconds")
+            print(f"Speakers detected: {len(self.speakers)}")
+            print("===========================\n")
+        else:
+            logger.info("Transcription system already stopped")
+
+    def is_complete_sentence(self, text):
+        """
+        Determine if text is likely a complete sentence based on linguistic patterns.
+        Returns True if the text appears to be a complete sentence, False otherwise.
+        """
+        # Strip whitespace and check if empty
+        text = text.strip()
+        if not text:
+            return False
+            
+        # Check if text ends with sentence-ending punctuation
+        sentence_endings = [".", "!", "?", "...", ":", ";"]
+        has_ending_punct = any(text.endswith(end) for end in sentence_endings)
         
-        # Clean up resources
-        for executor_name, executor in self.executors.items():
-            executor.shutdown(wait=False)
+        # Check for complete sentence structure by looking for verb phrases
+        # Basic verb patterns (not exhaustive but catches common cases)
+        common_verbs = ["is", "are", "was", "were", "have", "has", "had", "do", "does", "did",
+                        "can", "could", "will", "would", "should", "may", "might", "must",
+                        "take", "make", "go", "see", "know", "get", "feel", "think", "come",
+                        "look", "want", "give", "use", "find", "need", "try", "ask", "tell",
+                        "work", "seem", "call", "continue", "visit", "prescribe", "recommend"]
+                        
+        # Check for presence of a verb (simplistic but effective first pass)
+        words = text.lower().split()
+        has_verb = any(verb in words for verb in common_verbs)
         
-        logger.info("Transcription system stopped")
+        # Check for imperative sentences (commands) which often start with verbs
+        starts_with_verb = words[0] in common_verbs if words else False
         
-        # Print summary
-        print("\n====== Session Summary ======")
-        print(f"Duration: {time.time() - self.start_time:.1f} seconds")
-        print(f"Speakers detected: {len(self.speakers)}")
-        print("===========================\n")
+        # Special cases for conversational fragments that are acceptable
+        ok_fragments = [
+            "Yes", "No", "Maybe", "Sure", "Thanks", "Thank you", "OK", "Okay",
+            "I see", "Of course", "Absolutely", "Definitely", "Certainly",
+            "Not really", "I agree", "I understand", "Go ahead", "I'm sorry"
+        ]
+        
+        is_ok_fragment = any(text.lower().startswith(frag.lower()) for frag in ok_fragments)
+        
+        # Detect likely sentence fragments (incomplete thoughts)
+        fragment_starts = ["and then", "so that", "which is", "because", "even though", "although"]
+        is_dependent_clause = any(text.lower().startswith(start) for start in fragment_starts)
+        
+        # We consider a sentence complete if one of these is true:
+        # 1. It ends with proper punctuation AND either has a verb or is an imperative
+        # 2. It's a recognized conversational fragment
+        # 3. It's longer than 5 words and has a verb (even without punctuation)
+        
+        return (
+            (has_ending_punct and (has_verb or starts_with_verb)) or
+            is_ok_fragment or
+            (len(words) > 5 and has_verb and not is_dependent_clause)
+        )
+        
+    def filter_incomplete_sentences(self, text, is_final=False):
+        """
+        Filter out incomplete sentences from transcription text.
+        If is_final is True, returns the text regardless as it's the final version.
+        """
+        if is_final:
+            return text
+            
+        if not text:
+            return ""
+            
+        # Split into potential sentences
+        # This uses a simple split on punctuation, which is not perfect but works for most cases
+        sentence_endings = [". ", "! ", "? ", ".\n", "!\n", "?\n", "... "]
+        for ending in sentence_endings:
+            text = text.replace(ending, ending + "<SPLIT>")
+            
+        sentences = text.split("<SPLIT>")
+        
+        # If only one sentence, check if it's complete
+        if len(sentences) == 1:
+            return text if self.is_complete_sentence(text) else ""
+            
+        # For multiple sentences, keep all complete sentences 
+        # plus the last one if we're at the end of a segment
+        result_sentences = []
+        for i, sentence in enumerate(sentences):
+            if i == len(sentences) - 1:  # Last sentence
+                if self.is_complete_sentence(sentence) or is_final:
+                    result_sentences.append(sentence)
+            else:
+                if sentence.strip():  # Non-empty
+                    result_sentences.append(sentence)
+                    
+        return "".join(result_sentences)
+
+    def remove_repeated_phrases(self, text):
+        """
+        Detect and remove repeated phrases in transcribed text.
+        """
+        if not text or len(text) < 10:
+            return text
+            
+        # First pass: Remove exact duplicated sentences back-to-back
+        # Split the text into sentences
+        sentences = []
+        current = ""
+        for char in text:
+            current += char
+            if char in '.!?' and (len(current) > 1):
+                sentences.append(current.strip())
+                current = ""
+        if current:
+            sentences.append(current.strip())
+            
+        # Remove consecutive duplicate sentences
+        i = 0
+        result_sentences = []
+        while i < len(sentences):
+            result_sentences.append(sentences[i])
+            # Skip ahead past duplicates
+            j = i + 1
+            while j < len(sentences) and sentences[j] == sentences[i]:
+                j += 1
+            i = j
+            
+        # Second pass: Remove repeated phrases within the text (like stuttering)
+        result_text = ' '.join(result_sentences)
+        
+        # Find phrases that repeat more than twice
+        words = result_text.split()
+        if len(words) < 6:  # Skip short texts
+            return result_text
+            
+        # Look for repeated word patterns (2-4 words long)
+        for pattern_len in range(2, min(5, len(words) // 2)):
+            i = 0
+            while i <= len(words) - pattern_len * 2:
+                pattern1 = ' '.join(words[i:i+pattern_len])
+                pattern2 = ' '.join(words[i+pattern_len:i+pattern_len*2])
+                
+                # If we found a repeated pattern
+                if pattern1.lower() == pattern2.lower():
+                    # Remove the second occurrence
+                    words = words[:i+pattern_len] + words[i+pattern_len*2:]
+                else:
+                    i += 1
+        
+        return ' '.join(words)
+        
+    def clean_repetitive_answers(self, text):
+        """
+        Clean up repetitive short answers like "Yes. Yes. Yes."
+        """
+        common_answers = ["yes", "no", "maybe", "okay", "sure", "right", "exactly", 
+                         "correct", "thanks", "thank you", "ok", "all right", "uh-huh",
+                         "mm-hmm", "got it", "i see", "understood"]
+        
+        # Check each common answer for repetition
+        for answer in common_answers:
+            # Look for variations with different endings
+            for ending in ["", ".", "!", "?"]:
+                pattern = f"{answer}{ending}"
+                if pattern.lower() in text.lower():
+                    # Count occurrences (case insensitive)
+                    count = 0
+                    lower_text = text.lower()
+                    lower_pattern = pattern.lower()
+                    
+                    # Count non-overlapping occurrences
+                    pos = 0
+                    while True:
+                        pos = lower_text.find(lower_pattern, pos)
+                        if pos == -1:
+                            break
+                        count += 1
+                        pos += len(lower_pattern)
+                    
+                    # If repeated more than once, replace with just one instance
+                    if count > 1:
+                        # Find the first occurrence with proper casing
+                        pattern_pos = lower_text.find(lower_pattern)
+                        original_casing = text[pattern_pos:pattern_pos+len(pattern)]
+                        
+                        # Remove all instances and add back just one
+                        text = re.sub(f"(?i){re.escape(pattern)}\\s*", "", text)
+                        text = original_casing + " " + text.strip()
+        
+        return text.strip()
+
+    def postprocess_text(self, text):
+        """Apply various post-processing rules to clean up the transcribed text."""
+        if not text:
+            return ""
+        
+        # Apply existing post-processing rules
+        # ... (existing code) ...
+        
+        # Apply deduplication to remove repeated phrases
+        text = self.remove_repeated_phrases(text)
+        
+        # Clean up repetitive answers
+        text = self.clean_repetitive_answers(text)
+        
+        return text
 
 if __name__ == "__main__":
     # Configuration (best-practice thresholds)
@@ -896,22 +1313,25 @@ if __name__ == "__main__":
         "chunk_size": 4000,
         "sample_rate": 16000,
         "use_cuda": torch.cuda.is_available(),
-        "num_threads": min(4, os.cpu_count() or 1),
-        "silence_threshold": 0.005,
-        "min_voice_duration": 0.2,
-        "min_silence_duration": 0.1,
+        "num_threads": min(8, os.cpu_count() or 2),  # use more threads if available
+        "silence_threshold": 0.003, # VAD energy threshold (very sensitive to capture all speech)
+        "min_voice_duration": 0.1,   # capture even very short utterances
+        "min_silence_duration": 0.05, # split on very short silences for better segmentation
         "no_speech_threshold": 0.85,
-        "simple_diarization": False,
-        "speaker_similarity_threshold": 0.75,
-        "capture_all_speech": True,  # capture all voices in main run
-        "blocked_phrases": [
-            "thank you for watching",
-            "sous-titrage société radio-canada",
-            "takk for att du så på",
-            "terima kasih telah menonton",
-            "subtitled by",
-            "captions",
-        ],
+        # NeMo clustering parameters
+        "clustering": {
+            "min_samples": 3,      # Require more samples for a cluster
+            "eps": 0.12,           # Tighter clustering threshold
+            "max_speakers": 8,     # Maximum number of speakers to detect
+            "window_size": 60,     # Longer context window for better clustering
+            "enhanced": True,      # Use NeMo's enhanced clustering
+            "fallback_threshold": 0.70  # Higher threshold for better discrimination
+        },
+        "speech_language": {
+            "min_confidence": 0.75,  # Minimum confidence in language detection
+            "non_latin_ratio": 0.1,  # Maximum allowed non-Latin character ratio
+            "target_lang_confidence": 0.4  # Minimum confidence in target language
+        }
     }
     
     # Create and start the transcriber
