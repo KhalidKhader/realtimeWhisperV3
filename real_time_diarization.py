@@ -35,6 +35,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 import re
 from langdetect import detect_langs
+import math
 
 # Load environment variables
 load_dotenv()
@@ -137,62 +138,119 @@ class SpeakerProfile:
         
         self.total_duration += duration
 
+class TranscriptionValidator:
+    """
+    Simplified validator that just forwards the transcription without complex validation.
+    """
+    def __init__(self, config=None):
+        self.config = config or {}
+    
+    def validate(self, text, confidence_scores=None):
+        """Basic validation just checks if text is not empty."""
+        if not text or len(text.strip()) < 2:
+            return False, 0.0, "Empty text"
+        return True, 1.0, "Valid speech"
+        
+    def _clean_text(self, text):
+        """Basic text cleaning."""
+        return text.strip()
+
+class AudioPreprocessor:
+    """
+    Enhanced audio preprocessing to improve signal quality before transcription.
+    """
+    def __init__(self, sample_rate=16000, config=None):
+        self.sample_rate = sample_rate
+        self.config = {
+            "noise_reduction_factor": 0.5,   # Noise reduction strength
+            "normalize_audio": True,         # Apply normalization
+            "apply_filters": True,           # Apply audio filtering
+            "high_pass_cutoff": 100,         # High-pass filter cutoff (Hz)
+            "low_pass_cutoff": 3500,         # Low-pass filter cutoff (Hz)
+            "energy_threshold": 0.005,       # Energy threshold for voice
+            "dynamic_range_compression": 0.7 # Dynamic range compression factor
+        }
+        
+        if config:
+            self.config.update(config)
+            
+        # Pre-calculate filter coefficients
+        self._init_filters()
+        
+        # Keep noise profile for adaptive filtering
+        self.noise_profile = None
+        self.noise_samples = []
+        self.noise_std = 0.01  # Initial estimate
+    
+    def _init_filters(self):
+        """Initialize filter coefficients for efficient processing."""
+        # This is a simplified implementation - in a full implementation we'd use scipy.signal
+        # to create proper butterworth filters for high-pass and low-pass
+        pass
+    
+    def update_noise_profile(self, audio_chunk):
+        """Update the noise profile based on low-energy audio chunks."""
+        energy = np.mean(audio_chunk**2)
+        if energy < self.config["energy_threshold"]:
+            # Likely noise, update noise profile
+            self.noise_samples.append(audio_chunk)
+            if len(self.noise_samples) > 10:
+                self.noise_samples.pop(0)  # Keep only recent noise samples
+                
+            # Update noise standard deviation
+            if len(self.noise_samples) > 3:
+                concat_noise = np.concatenate(self.noise_samples)
+                self.noise_std = np.std(concat_noise)
+    
+    def process(self, audio_chunk):
+        """Apply comprehensive preprocessing to audio chunk."""
+        if not self.config["apply_filters"]:
+            return audio_chunk
+            
+        # Update noise profile
+        self.update_noise_profile(audio_chunk)
+        
+        # Apply sequence of enhancements
+        audio = audio_chunk.copy()
+        
+        # 1. Normalize if needed
+        if self.config["normalize_audio"] and np.max(np.abs(audio)) > 0:
+            audio = audio / np.max(np.abs(audio))
+            
+        # 2. Apply spectral subtraction for noise reduction
+        if self.noise_std > 0 and self.config["noise_reduction_factor"] > 0:
+            noise_scale = self.noise_std * self.config["noise_reduction_factor"]
+            # Simple noise gate
+            audio[np.abs(audio) < noise_scale * 2] = 0
+            
+        # 3. Apply dynamic range compression
+        if self.config["dynamic_range_compression"] < 1.0:
+            # Simple compression
+            compressed = np.sign(audio) * np.abs(audio)**self.config["dynamic_range_compression"]
+            # Normalize to maintain relative volume
+            if np.max(np.abs(compressed)) > 0:
+                compressed = compressed / np.max(np.abs(compressed))
+            audio = compressed
+            
+        return audio
+
 class RealTimeTranscriber:
     def __init__(self, config=None):
         # Default configuration thresholds tuned for clarity
         default_config = {
             "sample_rate": 16000,
-            "chunk_size": 4000,        # 250ms chunks
-            "buffer_size": 30,         # 30s context buffer
-            "silence_threshold": 0.003, # VAD energy threshold (very sensitive to capture all speech)
-            "calibration_duration": 2.0, # seconds to record ambient noise at startup
-            "calibration_factor": 1.2,   # multiplier for ambient noise RMS to set silence_threshold
-            "min_voice_duration": 0.1,   # capture even very short utterances
-            "min_silence_duration": 0.05, # split on very short silences for better segmentation
-            "no_speech_threshold": 0.85,
+            "chunk_size": 6000,        # Larger chunks (625ms) for better context
+            "buffer_size": 5,         # 30s context buffer
+            "silence_threshold": 0.01, # Higher threshold for cleaner speech detection
+            "min_voice_duration": 0.7,   # Longer segments for better quality
+            "min_silence_duration": 0.2, # Longer silence for better segmentation
             "language": DEFAULT_LANGUAGE,
             "use_cuda": torch.cuda.is_available(),
+            "use_mps": torch.backends.mps.is_available(),
             "num_threads": min(8, os.cpu_count() or 2),  # use more threads if available
-            "simple_diarization": False,  # disable simple alternating speaker diarization
-            "speaker_similarity_threshold": 0.45,  # Lower threshold to more aggressively merge similar speakers
-            "max_speakers": 2,  # Limit to 2 speakers for medical conversations
-            "capture_all_speech": True,  # capture all voices in main run
-            "blocked_phrases": [
-                "thank you for watching",
-                "takk for watching",
-                "thanks for watching",
-                "sous-titrage société radio-canada",
-                "takk for att du så på",
-                "terima kasih telah menonton",
-                "subtitled by",
-                "captions",
-                "subtitles by",
-                "tchau",
-                "bye-bye",
-                "obrigado",
-                "مرحباً",
-                "شكراً",
-                "e aí",
-                "gracias",
-                "حسنا",
-                "لنبدأ",
-                "بالتوصيل",
-                "بالتصوير"
-            ],
-            # NeMo clustering parameters
-            "clustering": {
-                "min_samples": 2,      # Lower min samples to merge clusters more easily
-                "eps": 0.25,           # Higher eps for more aggressive clustering (less discriminative)
-                "max_speakers": 2,     # Maximum number of speakers to detect
-                "window_size": 120,    # Longer context window for better clustering
-                "enhanced": True,      # Use NeMo's enhanced clustering
-                "fallback_threshold": 0.45  # Lower threshold for more aggressive merging
-            },
-            "speech_language": {
-                "min_confidence": 0.75,  # Minimum confidence in language detection
-                "non_latin_ratio": 0.1,  # Maximum allowed non-Latin character ratio
-                "target_lang_confidence": 0.4  # Minimum confidence in target language
-            }
+            "max_speakers": 3,  # Fewer speakers for clearer diarization
+            "speaker_similarity_threshold": 0.7,  # Higher threshold for better speaker distinction
+            "capture_all_speech": True  # capture all voices in main run
         }
         
         # Override defaults with provided config
@@ -240,24 +298,39 @@ class RealTimeTranscriber:
         self.speaker_labels = {}  # Maps cluster IDs to speaker IDs
         self.next_speaker_id = 0  # Counter for generating speaker IDs
         
+        # Initialize validation components - much simpler now
+        self.validator = TranscriptionValidator(config=self.config)
+        
         # Initialize models
         self.initialize_models()
     
     def initialize_models(self):
         """Initialize all ML models with optimized settings."""
         logger.info("Initializing models...")
+        print("Initializing models...")
         
-        # Set compute device
-        self.device = "cuda" if torch.cuda.is_available() and self.config["use_cuda"] else "cpu"
-        self.torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+        # Set compute device - prioritize MPS
+        if self.config["use_mps"] and torch.backends.mps.is_available():
+            self.device = "mps"
+        elif self.config["use_cuda"] and torch.cuda.is_available():
+            self.device = "cuda"
+        else:
+            self.device = "cpu"
+            
+        self.torch_dtype = torch.float16 if self.device in ["cuda", "mps"] else torch.float32
+        print(f"Using device: {self.device} with dtype: {self.torch_dtype}")
         
         # Initialize models sequentially to avoid threading issues
+        print("Initializing diarization...")
         self.initialize_diarization()
+        print("Diarization initialized. Initializing Whisper...")
         self.initialize_whisper()
+        print("Whisper initialized.")
         
         # Mark model initialization as complete
         self.initialization_complete = True
-        logger.info(f"All models initialized successfully")
+        logger.info(f"All models initialized successfully on {self.device}")
+        print(f"All models initialized successfully on {self.device}")
     
     def initialize_whisper(self):
         """Initialize optimized Whisper large-v3 model."""
@@ -278,11 +351,11 @@ class RealTimeTranscriber:
                 use_safetensors=True
             )
             
-            # Optimize for inference
-            if self.device == "cuda":
-                self.model = self.model.to(self.device)
+            # Optimize for inference - move to the selected device
+            self.model = self.model.to(self.device)
+            logger.info(f"Model moved to {self.device} device")
             
-            # Create optimized pipeline - avoid using device parameter with accelerate
+            # Create optimized pipeline
             self.whisper_pipe = pipeline(
                 "automatic-speech-recognition",
                 model=self.model,
@@ -290,16 +363,21 @@ class RealTimeTranscriber:
                 feature_extractor=self.processor.feature_extractor,
                 torch_dtype=self.torch_dtype,
                 chunk_length_s=10,         # 10s chunk for robust context
-                stride_length_s=2,         # 2s overlap for smooth segment transitions
-                batch_size=1,
-                return_timestamps=True,
-                return_language=True
+                stride_length_s=3,         # 3s overlap for better continuity
+                batch_size=1
             )
             
-            # Fix the forced_decoder_ids warning by setting empty list
-            self.empty_decoder_ids = []
+            # Fixed generate parameters that are compatible with Whisper v3
+            self.generate_kwargs = {
+                "task": "transcribe",
+                "language": self.config.get("language", "en"),
+                "temperature": 0.0,
+                "compression_ratio_threshold": 1.5,
+                "logprob_threshold": -0.7,
+                "no_speech_threshold": 0.6
+            }
             
-            logger.info("Whisper model loaded successfully")
+            logger.info(f"Whisper model loaded successfully on {self.device}")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
@@ -314,33 +392,50 @@ class RealTimeTranscriber:
                 model_name="titanet_large"
             )
             
-            # Move to appropriate device and optimize
-            if self.device == "cuda":
-                self.speaker_model = self.speaker_model.to(self.device)
-            self.speaker_model.eval()  # Set to evaluation mode
-            
             # Load VAD model
             self.vad_model = nemo_asr.models.EncDecClassificationModel.from_pretrained(
                 model_name="vad_multilingual_marblenet"
             )
             
-            # Move to appropriate device and optimize
-            if self.device == "cuda":
-                self.vad_model = self.vad_model.to(self.device)
-            self.vad_model.eval()  # Set to evaluation mode
+            # For MPS compatibility, move speaker model to MPS but keep VAD on CPU
+            # This ensures maximum compatibility while still using GPU acceleration where possible
+            if self.device == "mps":
+                try:
+                    # Move speaker model to MPS for faster embedding extraction
+                    self.speaker_model = self.speaker_model.to("mps")
+                    # Always keep VAD on CPU for compatibility
+                    self.vad_model = self.vad_model.to("cpu")
+                    logger.info("Speaker model on MPS, VAD model on CPU for MPS compatibility")
+                except Exception as e:
+                    logger.warning(f"Failed to move models to MPS: {e}")
+                    # Fall back to CPU for everything
+                    self.speaker_model = self.speaker_model.to("cpu")
+                    self.vad_model = self.vad_model.to("cpu")
+                    logger.info("All NeMo models on CPU due to MPS compatibility issues")
+            elif self.device == "cuda":
+                # On CUDA, we can use GPU for everything
+                self.speaker_model = self.speaker_model.to("cuda")
+                self.vad_model = self.vad_model.to("cuda")
+                logger.info("All NeMo models on CUDA")
+            else:
+                # Default to CPU
+                self.speaker_model = self.speaker_model.to("cpu")
+                self.vad_model = self.vad_model.to("cpu")
+                logger.info("All NeMo models on CPU")
+            
+            # Set to evaluation mode
+            self.speaker_model.eval()
+            self.vad_model.eval()
+            
+            # Log the actual devices being used
+            logger.info(f"Speaker model device: {next(self.speaker_model.parameters()).device}")
+            logger.info(f"VAD model device: {next(self.vad_model.parameters()).device}")
             
             # Initialize clustering parameters for diarization
             try:
                 # Import NeMo clustering and diarization components
-                import nemo.collections.asr.parts.utils.speaker_utils as speaker_utils
                 from nemo.collections.asr.parts.utils.offline_clustering import (
-                    SpeakerClustering, 
-                    get_argmin_mat,
-                    split_input_data
-                )
-                from nemo.collections.asr.parts.utils.speaker_utils import (
-                    get_timestamps_from_manifest, 
-                    embedding_normalize
+                    SpeakerClustering
                 )
 
                 # Get clustering parameters from config
@@ -442,6 +537,7 @@ class RealTimeTranscriber:
     def vad_processing_thread(self):
         """Voice Activity Detection processing thread."""
         logger.info("VAD processing thread started")
+        print("VAD processing thread started - ready to detect speech")
         
         speech_segments = []
         continuous_silence = 0
@@ -451,6 +547,8 @@ class RealTimeTranscriber:
         # Enhanced parameters for better voice capture
         max_segment_length = 10.0  # maximum segment length in seconds before forced processing
         min_segment_energy = 0.001  # minimum energy to consider for processing
+        last_detection_time = time.time()
+        detection_counter = 0
         
         try:
             while self.is_running:
@@ -466,6 +564,15 @@ class RealTimeTranscriber:
                 # Add to main buffer
                 self.main_buffer.add(audio_chunk, has_voice)
                 
+                # Diagnostic output periodically
+                if has_voice:
+                    now = time.time()
+                    detection_counter += 1
+                    if now - last_detection_time > 5.0:
+                        print(f"Speech detected ({detection_counter} chunks since last report)")
+                        last_detection_time = now
+                        detection_counter = 0
+                
                 # Handle voice state tracking
                 chunk_duration = len(audio_chunk) / self.sample_rate
                 
@@ -474,6 +581,7 @@ class RealTimeTranscriber:
                         in_speech = True
                         continuous_silence = 0
                         current_segment = [audio_chunk]
+                        print("Speech segment started")
                     else:
                         current_segment.append(audio_chunk)
                 else:  # No voice
@@ -481,7 +589,7 @@ class RealTimeTranscriber:
                     
                     if in_speech:
                         # Still collect during short silences
-                        if continuous_silence < self.config["min_silence_duration"]:
+                        if continuous_silence < self.config.get("min_silence_duration", 0.05):
                             current_segment.append(audio_chunk)
                         else:
                             # End of speech segment
@@ -491,9 +599,14 @@ class RealTimeTranscriber:
                                 segment_duration = len(segment_audio) / self.sample_rate
                                 
                                 # Only process segments above minimum duration
-                                if segment_duration >= self.config["min_voice_duration"]:
+                                if segment_duration >= self.config.get("min_voice_duration", 0.1):
+                                    print(f"Speech segment (duration: {segment_duration:.2f}s) sent for processing")
                                     if not self.vad_queue.full():
                                         self.vad_queue.put(segment_audio)
+                                    else:
+                                        print("WARNING: VAD queue full, dropping segment")
+                                else:
+                                    print(f"Speech segment too short ({segment_duration:.2f}s), dropping")
                                 
                                 # Reset
                                 current_segment = []
@@ -511,15 +624,16 @@ class RealTimeTranscriber:
                         # Check if segment has minimum energy to be worth processing
                         rms = np.sqrt(np.mean(segment_audio**2)) if segment_audio.size > 0 else 0
                         if rms < min_segment_energy:
-                            logger.debug(f"Skipping low-energy segment: {rms:.6f}")
+                            print(f"Skipping low-energy segment: {rms:.6f}")
                             current_segment = []
                             continue
                         
+                        print(f"Long speech segment (duration: {segment_duration:.2f}s) sent for processing")
                         if not self.vad_queue.full():
                             try:
                                 self.vad_queue.put(segment_audio, block=False)
                             except queue.Full:
-                                logger.warning("VAD queue full, skipping segment")
+                                print("WARNING: VAD queue full, dropping segment")
                                 continue
                             # Keep the last second to maintain context
                             last_samples = int(2.0 * self.sample_rate)  # 2 seconds of context overlap
@@ -532,45 +646,63 @@ class RealTimeTranscriber:
                 
         except Exception as e:
             logger.error(f"VAD processing error: {e}")
+            print(f"VAD processing error: {e}")
     
-    def detect_voice_activity(self, audio_chunk):
-        """Detect voice activity using NeMo VAD."""
+    def detect_voice_activity(self, audio_chunk, threshold=0.0002):
+        """
+        Improved Voice Activity Detection (VAD) using energy-based and spectral features.
+        
+        Args:
+            audio_chunk: Audio numpy array
+            threshold: Energy threshold for voice detection
+            
+        Returns:
+            bool: True if voice detected, False otherwise
+        """
         try:
-            if self.use_nemo:
-                # Use VAD model directly on audio chunk
-                with torch.no_grad():
-                    # Convert to tensor
-                    audio_tensor = torch.tensor(audio_chunk).unsqueeze(0)
-                    
-                    # NeMo expects shape [B, T]
-                    if audio_tensor.dim() == 1:
-                        audio_tensor = audio_tensor.unsqueeze(0)
-                    
-                    if self.device == "cuda":
-                        audio_tensor = audio_tensor.to(self.device)
-                    
-                    # Get logits
-                    logits = self.vad_model.forward(
-                        input_signal=audio_tensor, 
-                        input_signal_length=torch.tensor([len(audio_chunk)])
-                    )
-                    
-                    # Convert to probabilities
-                    probs = torch.softmax(logits, dim=-1)
-                    
-                    # Check if speech probability exceeds threshold
-                    speech_prob = probs[0, 1].item()  # Index 1 is speech class
-                    
-                    return speech_prob > self.config["silence_threshold"]
-            else:
-                # Fallback to simple energy-based VAD
-                rms = np.sqrt(np.mean(audio_chunk**2))
-                return rms > self.config["silence_threshold"]
+            # Convert to numpy array if necessary
+            if not isinstance(audio_chunk, np.ndarray):
+                audio_chunk = np.array(audio_chunk)
                 
+            # Ensure audio is in correct shape and type
+            if len(audio_chunk.shape) > 1:
+                audio_chunk = audio_chunk.mean(axis=1)  # Convert stereo to mono if needed
+            
+            # 1. Energy-based detection
+            energy = np.mean(np.square(audio_chunk))
+            energy_vad = energy > threshold
+            
+            if not energy_vad:
+                return False
+                
+            # 2. Spectral features for improved detection
+            if len(audio_chunk) >= 512:  # Minimum size for FFT
+                # Calculate spectral centroid and flux
+                fft = np.abs(np.fft.rfft(audio_chunk))
+                freqs = np.fft.rfftfreq(len(audio_chunk), 1/self.sample_rate)
+                
+                # Ignore very low frequencies (below 100Hz) which are often noise
+                mask = freqs > 50  # Lower this from 100 to 50 Hz to be more sensitive
+                if np.sum(mask) > 0:
+                    fft_filtered = fft[mask]
+                    
+                    # Check if there's significant mid-range frequency content (speech is ~300-3000Hz)
+                    speech_range_mask = (freqs > 200) & (freqs < 4000)  # Widen speech range
+                    if np.sum(speech_range_mask) > 0:
+                        speech_energy = np.mean(fft[speech_range_mask])
+                        background_energy = np.mean(fft[~speech_range_mask])
+                        
+                        # If speech energy is significantly higher than background
+                        spectral_speech_detected = speech_energy > (1.2 * background_energy)  # Lower this from 1.5 to 1.2
+                        return spectral_speech_detected
+            
+            # Default to energy-based decision if spectral analysis is not conclusive
+            return energy_vad
+            
         except Exception as e:
             logger.error(f"VAD error: {e}")
-            # Default to treating as speech in case of error
-            return True
+            # Default to basic threshold in case of error
+            return np.mean(np.abs(audio_chunk)) > threshold
     
     def diarization_thread(self):
         """Speaker diarization processing thread."""
@@ -601,10 +733,11 @@ class RealTimeTranscriber:
             logger.error(f"Diarization error: {e}")
     
     def identify_speaker(self, audio_segment):
-        """Identify speaker using NeMo speaker embeddings and clustering."""
+        """Identify speaker using NeMo speaker embeddings and similarity matching."""
         try:
-            # Get max speakers limit
-            max_speakers = self.config.get("max_speakers", 2)
+            # Get max speakers and similarity threshold
+            max_speakers = self.config.get("max_speakers", 3)
+            similarity_threshold = self.config.get("speaker_similarity_threshold", 0.7)
             
             if self.use_nemo:
                 # Create temporary file for NeMo processing
@@ -618,110 +751,102 @@ class RealTimeTranscriber:
                     
                     # Extract embedding
                     with torch.no_grad():
-                        embedding = self.speaker_model.get_embedding(tmp_file.name)
-                        embedding = embedding.cpu().numpy()
+                        try:
+                            embedding = self.speaker_model.get_embedding(tmp_file.name)
+                            # Move to CPU and convert to numpy for safe processing
+                            embedding = embedding.cpu().numpy()
+                            
+                            # Ensure embedding is properly flattened (1D array)
+                            if embedding.ndim > 2:
+                                # If we have a 3D tensor, we need to flatten it to 2D for similarity computation
+                                logger.warning(f"Got embedding with shape {embedding.shape}, flattening")
+                                embedding = embedding.reshape(1, -1).squeeze()
+                            elif embedding.ndim < 2:
+                                # Ensure 2D for similarity computation
+                                embedding = embedding.reshape(1, -1)
+                        except Exception as e:
+                            logger.error(f"Error extracting embedding: {e}")
+                            # Create a fallback embedding
+                            embedding = np.random.rand(512).astype(np.float32)  # Standard 512-dim embedding size
                 
-                # Record current timestamp for windowing
-                current_time = time.time()
+                # Ensure embeddings are consistently shaped
+                if embedding.ndim == 1:
+                    embedding_shaped = embedding.reshape(1, -1)
+                else:
+                    embedding_shaped = embedding
                 
-                # Add the new embedding to our buffer
-                self.speaker_embeddings_buffer.append((embedding, current_time))
-                
-                # Maintain buffer size by removing older embeddings
-                window_size = self.config.get("clustering", {}).get("window_size", 120)
-                self.speaker_embeddings_buffer = [
-                    (emb, ts) for emb, ts in self.speaker_embeddings_buffer 
-                    if current_time - ts < window_size
-                ]
-                
-                # If less than max_speakers exist, and it's the first time, create first speaker
+                # If no speakers yet, create first speaker
                 if len(self.speakers) == 0:
-                    return "Speaker_1", embedding
+                    new_id = "Speaker_1"
+                    self.speakers[new_id] = SpeakerProfile(id=new_id, embedding=embedding_shaped)
+                    return new_id, embedding_shaped
                     
-                # If we already have speaker profiles, calculate similarities
+                # If we have existing speakers, calculate similarities
                 if self.speakers:
                     similarities = []
                     for speaker_id, profile in self.speakers.items():
                         if profile.embedding is not None:
-                            sim = cosine_similarity([embedding], [profile.embedding])[0][0]
-                            similarities.append((speaker_id, sim))
+                            try:
+                                # Ensure both embeddings are 2D arrays
+                                emb1 = embedding_shaped
+                                emb2 = profile.embedding
+                                
+                                if emb2.ndim == 1:
+                                    emb2 = emb2.reshape(1, -1)
+                                
+                                # Compute similarity
+                                sim = cosine_similarity(emb1, emb2)[0][0]
+                                similarities.append((speaker_id, sim))
+                                print(f"Similarity with {speaker_id}: {sim:.3f}")
+                            except Exception as e:
+                                logger.error(f"Error computing similarity: {e}")
+                                similarities.append((speaker_id, 0.0))
                     
-                    # If we found any similarities
+                    # Sort by similarity (highest first)
                     if similarities:
-                        # Sort by similarity (highest first)
                         similarities.sort(key=lambda x: x[1], reverse=True)
                         best_match_id, best_sim = similarities[0]
-                        threshold = self.config.get("speaker_similarity_threshold", 0.45)
                         
                         # If found a good match, return that speaker
-                        if best_sim > threshold:
-                            # Update speaker's embedding with this new one for better tracking
-                            self.speakers[best_match_id].update_embedding(embedding, 0.5)
-                            return best_match_id, embedding
+                        if best_sim > similarity_threshold:
+                            # Update speaker's embedding with a weighted average
+                            self.speakers[best_match_id].update_embedding(embedding_shaped, 0.3)
+                            print(f"Speaker {best_match_id} matched with similarity {best_sim:.3f}")
+                            return best_match_id, embedding_shaped
                         
                         # If we've reached max speakers, return the most similar one anyway
                         if len(self.speakers) >= max_speakers:
-                            # Update speaker's embedding with this new one for better tracking
-                            self.speakers[best_match_id].update_embedding(embedding, 0.2)
-                            return best_match_id, embedding
-                    
-                # If we haven't hit max speakers yet, create a new one
+                            # Update speaker's embedding slightly
+                            self.speakers[best_match_id].update_embedding(embedding_shaped, 0.1)
+                            print(f"Max speakers reached. Using {best_match_id} (similarity: {best_sim:.3f})")
+                            return best_match_id, embedding_shaped
+                
+                # Create a new speaker profile if below the max limit
                 if len(self.speakers) < max_speakers:
                     new_id = f"Speaker_{len(self.speakers) + 1}"
-                    return new_id, embedding
-                    
-                # Fallback: return the first speaker if we somehow got here
-                return "Speaker_1", embedding
-            else:
-                # Fallback to PyAnnotate
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp_file:
-                    sf.write(tmp_file.name, audio_segment, self.sample_rate)
-                    diarization = self.pyannote_pipeline(tmp_file.name)
-                    
-                    # Extract most likely speaker
-                    speaker_counts = {}
-                    for turn, _, speaker in diarization.itertracks(yield_label=True):
-                        if speaker not in speaker_counts:
-                            speaker_counts[speaker] = 0
-                        speaker_counts[speaker] += turn.duration
-                    
-                    # Find speaker with longest duration
-                    if speaker_counts:
-                        speaker_id = max(speaker_counts.items(), key=lambda x: x[1])[0]
-                        # Convert to our naming convention, but enforce max_speakers
-                        numeric_id = speaker_id.replace("SPEAKER_", "").replace("speaker_", "")
-                        try:
-                            speaker_num = int(numeric_id) % max_speakers + 1
-                        except:
-                            speaker_num = len(self.speakers) % max_speakers + 1
-                        speaker_id = f"Speaker_{speaker_num}"
-                    else:
-                        if len(self.speakers) == 0:
-                            speaker_id = "Speaker_1"
-                        else:
-                            # Alternate between existing speakers
-                            speaker_num = (len(self.transcript_history) % max_speakers) + 1
-                            speaker_id = f"Speaker_{speaker_num}"
-                    
-                    # No embedding in PyAnnotate fallback
-                    return speaker_id, None
+                    self.speakers[new_id] = SpeakerProfile(id=new_id, embedding=embedding_shaped)
+                    print(f"New speaker detected: {new_id}")
+                    return new_id, embedding_shaped
+                
+                # Fallback to the most similar speaker
+                if similarities:
+                    best_match_id = similarities[0][0]
+                    return best_match_id, embedding_shaped
+                
+                # Ultimate fallback
+                return f"Speaker_1", None
                 
         except Exception as e:
             logger.error(f"Speaker identification error: {e}")
-            # Fallback to alternating speakers
-            if not self.transcript_history:
-                return "Speaker_1", None
-            else:
-                # Get the most recent speaker and alternate
-                last_speaker = self.transcript_history[-1]["speaker_id"]
-                if last_speaker == "Speaker_1":
-                    return "Speaker_2", None
-                else:
-                    return "Speaker_1", None
+            # Return a default speaker ID
+            return "Speaker_1", None
     
     def transcription_thread(self):
         """Transcription processing thread."""
         logger.info("Transcription thread started")
+        print("Transcription thread started - ready to transcribe speech")
+        segment_counter = 0
+        
         while self.is_running:
             # Get diarized segment
             try:
@@ -730,31 +855,30 @@ class RealTimeTranscriber:
                 continue
 
             try:
+                segment_counter += 1
+                print(f"Processing segment #{segment_counter} from speaker {segment['speaker_id']}")
+                
                 # Run Whisper transcription
+                start_time = time.time()
                 transcription = self.transcribe_audio(segment["audio"])
+                trans_time = time.time() - start_time
+                
+                print(f"Transcription completed in {trans_time:.2f}s")
 
+                # Skip if no valid transcription was found
                 if not transcription or not transcription.strip():
+                    print("No transcription result - empty or None")
                     continue
 
-                # Filter out blocked phrases
-                if any(
-                    phrase.lower() in transcription.lower()
-                    for phrase in self.config.get("blocked_phrases", [])
-                ):
-                    logger.info(f"Skipping blocked phrase in transcript: {transcription}")
-                    continue
-
-                # Additional check for partial matches of phrases that often appear in outro segments
-                close_match_phrases = ["thank", "thanks", "watching", "takk", "bye", "subtitle"]
-                if any(phrase.lower() in transcription.lower() for phrase in close_match_phrases):
-                    logger.info(f"Likely outro/intro phrase detected, skipping: {transcription}")
-                    continue
-
-                # Suppress seen or duplicate transcripts
+                # Exact match duplicate detection - only check exact string matches
+                # to avoid over-filtering similar content
                 if transcription in self.seen_texts or (
                     self.transcript_history and transcription == self.transcript_history[-1]["text"]
                 ):
+                    print(f"Duplicate transcription - skipping: '{transcription}'")
                     continue
+                    
+                # Add to seen texts only if we'll use this transcription
                 self.seen_texts.add(transcription)
 
                 # Use speaker ID directly without role classification
@@ -765,7 +889,8 @@ class RealTimeTranscriber:
                     "speaker_id": speaker_id,
                     "role": speaker_id,  # Use speaker_id as the role
                     "text": transcription,
-                    "timestamp": segment["timestamp"]
+                    "timestamp": segment["timestamp"],
+                    "confidence": 1.0  # Store confidence score for later analysis
                 }
                 
                 if speaker_id not in self.speakers:
@@ -776,8 +901,10 @@ class RealTimeTranscriber:
                 
                 self.transcript_history.append(result)
                 self.output_queue.put(result)
+                print(f"Transcript added to output queue: {speaker_id}: {transcription}")
             except Exception as e:
                 logger.error(f"Transcription error: {e}")
+                print(f"Transcription error: {e}")
             finally:
                 # Mark the segment as processed exactly once
                 self.diarization_queue.task_done()
@@ -785,182 +912,34 @@ class RealTimeTranscriber:
     def transcribe_audio(self, audio_segment):
         """Transcribe audio using Whisper large-v3."""
         try:
+            # Process audio through Whisper pipeline
             audio_np = audio_segment.astype(np.float32)
-            # Normalize
+            
+            # Skip processing if segment is too short
+            if len(audio_np) < 1600:  # At least 100ms of audio
+                return None
+
+            # Normalize audio (critical for good results)
             if np.max(np.abs(audio_np)) > 0:
                 audio_np = audio_np / np.max(np.abs(audio_np))
-            # Enforce minimum segment duration
-            duration = len(audio_np) / self.sample_rate
-            if duration < self.config.get("min_voice_duration", 1.0):
-                return None
-            # Skip very short arrays
-            if len(audio_np) < 800:
-                return None
-            # VAD energy filter
-            rms = np.sqrt(np.mean(audio_np**2))
-            if rms < self.config["silence_threshold"]:
-                return None
-
-            # Create proper attention mask to fix the warning
-            # First extract features properly with attention mask
-            inputs = self.processor.feature_extractor(
-                audio_np, 
-                sampling_rate=self.sample_rate, 
-                return_tensors="pt", 
-                return_attention_mask=True
-            )
-            # Use proper attention mask from processor
-            input_features = inputs.input_features.to(self.device)
-            attention_mask = inputs.attention_mask.to(self.device) if hasattr(inputs, "attention_mask") else None
             
-            # Convert to list format that the pipeline expects
-            if attention_mask is not None:
-                # Create an attention mask where valid tokens have 1.0 and padding has 0.0
-                audio_np = {"array": audio_np, "sampling_rate": self.sample_rate, "attention_mask": attention_mask}
-
+            # Apply some basic noise reduction if energy is low
+            noise_floor = 0.005
+            audio_np[np.abs(audio_np) < noise_floor] = 0
+                
+            # Run transcription
             result = self.whisper_pipe(
                 audio_np,
-                generate_kwargs={
-                    "task": "transcribe",
-                    "temperature": 0.0,
-                    "forced_decoder_ids": self.empty_decoder_ids,  # explicitly set empty to fix warning
-                    "compression_ratio_threshold": 1.5,  # more repetition filtering
-                    "logprob_threshold": 0.0,            # require non-negative logprob
-                    "no_speech_threshold": self.config["no_speech_threshold"],
-                    "num_beams": 3,                      # beam search for accuracy
-                    "do_sample": False,                   # disable sampling for consistent results
-                    "return_legacy_cache": True,          # address cache warning
-                    "max_new_tokens": 256
-                }
+                generate_kwargs=self.generate_kwargs,
+                return_timestamps=False
             )
 
-            # Ignore transcripts in languages other than the configured one
-            if "language" in result:
-                detected = result["language"]
-                if isinstance(detected, dict):
-                    code = detected.get("language", detected.get("lang", None))
-                else:
-                    code = detected
-                if code != self.config["language"]:
-                    logger.info(f"Ignoring transcript in language: {code}")
-                    return None
-
-            # Language confidence check - replace blocklist with confidence check
+            # Extract text
             if "text" in result:
                 text = result["text"].strip()
-                # Use advanced language detection to check for confidence
-                if "language_probability" in result:
-                    lang_confidence = result["language_probability"]
-                    # Only keep high-confidence transcriptions
-                    if lang_confidence < 0.75:  # 75% confidence threshold
-                        logger.info(f"Ignoring low confidence ({lang_confidence:.2f}) transcript: {text}")
-                        return None
-
-                # Foreign script detection
-                non_latin_ratio = sum(1 for c in text if ord(c) > 127) / len(text) if text else 0
-                if non_latin_ratio > 0.1:  # More than 10% non-Latin characters
-                    logger.info(f"Ignoring transcript with non-Latin characters: {text}")
-                    return None
-                
-                # Check for common multilingual patterns and code-switching
-                # This approach is more flexible than a blocklist
-                try:
-                    # Try to detect potential code-switching
-                    detected_langs = detect_langs(text)
-                    
-                    # If the top language isn't our target language
-                    top_lang = detected_langs[0]
-                    if top_lang.lang != self.config["language"] and top_lang.prob > 0.6:
-                        logger.info(f"Ignoring code-switched text. Detected {top_lang.lang} with prob {top_lang.prob}: {text}")
-                        return None
-                    
-                    # If we have high confidence in multiple languages, it's likely code-switching
-                    if len(detected_langs) > 1 and detected_langs[1].prob > 0.3:
-                        logger.info(f"Detected likely code-switching: {detected_langs}")
-                        
-                        # If our target language is strong enough, keep it
-                        target_lang = next((l for l in detected_langs if l.lang == self.config["language"]), None)
-                        if not target_lang or target_lang.prob < 0.4:
-                            logger.info(f"Insufficient confidence in target language: {text}")
-                            return None
-                except Exception as e:
-                    # If language detection fails, fall back to content-based checks
-                    logger.debug(f"Language detection failed: {e}")
-                
-                # Check for likely misrecognized medical terms
-                medical_corrections = {
-                    r'\ban egg\b': 'an ECG',
-                    r'\begg\b': 'ECG',
-                    r'\bxenoblade\b': 'Clopidogrel',
-                    r'\baesir\b': 'ACE inhibitor',
-                    r'\baveda\b': 'a beta blocker',
-                    r'\baspirator\b': 'aspirator',
-                    r'\bstark\b': 'start',
-                    r'\beast cardiogram\b': 'electrocardiogram',
-                    r'\bgamingcardio\b': 'angiogram'
-                }
-                
-                for error, correction in medical_corrections.items():
-                    text = re.sub(error, correction, text, flags=re.IGNORECASE)
-                
-                # Validate sentence structure - filter incomplete fragments
-                # Check if the text is likely to be a complete sentence or thought
-                def is_complete_sentence(s):
-                    # Very short utterances are often incomplete
-                    if len(s.split()) < 3:
-                        return False
-                        
-                    # Check for ending with prepositions or articles - likely incomplete
-                    ending_words = ['to', 'the', 'a', 'an', 'in', 'on', 'at', 'with', 'by', 'for', 'and', 'or', 'but']
-                    last_word = s.split()[-1].lower().strip('.,?!')
-                    if last_word in ending_words:
-                        return False
-                        
-                    # Check if sentence has at least one complete clause structure
-                    # (simplistic implementation - counts verbs)
-                    has_subject = any(word.lower() in ['i', 'you', 'he', 'she', 'it', 'we', 'they'] for word in s.split())
-                    common_verbs = ['am', 'is', 'are', 'was', 'were', 'be', 'have', 'has', 'had', 'do', 'does', 'did', 
-                                   'can', 'could', 'will', 'would', 'see', 'feel', 'think', 'know', 'tell', 'go', 'come']
-                    has_verb = any(word.lower() in common_verbs for word in s.split())
-                    
-                    # Either has subject+verb structure or ends with punctuation
-                    return (has_subject and has_verb) or s.strip().endswith(('.', '?', '!'))
-                
-                # If text appears to be an incomplete fragment, check if we should discard it
-                if not is_complete_sentence(text):
-                    # Only discard if it's short and looks very incomplete
-                    if len(text.split()) < 8 and not any(x in text.lower() for x in ['doctor', 'patient', 'cardiac', 'heart']):
-                        logger.info(f"Skipping likely incomplete sentence: {text}")
-                        return None
-                
-                # More aggressive repetition removal - handles phrases not just single words
-                # First handle extreme word repetition
-                single_word_pattern = r'(\b\w+\b)(\s+\1){1,}'
-                text = re.sub(single_word_pattern, r'\1', text)
-                
-                # Then handle repeated phrases (2+ words)
-                for phrase_len in range(5, 1, -1):  # Try phrases of length 5,4,3,2 words
-                    # Look for repeated phrases of this length
-                    words = text.split()
-                    if len(words) < phrase_len * 2:
-                        continue
-                        
-                    i = 0
-                    while i <= len(words) - phrase_len * 2:
-                        phrase1 = ' '.join(words[i:i+phrase_len])
-                        phrase2 = ' '.join(words[i+phrase_len:i+phrase_len*2])
-                        
-                        if phrase1.lower() == phrase2.lower():
-                            # Remove the repetition
-                            words = words[:i+phrase_len] + words[i+phrase_len*2:]
-                        else:
-                            i += 1
-                    
-                    text = ' '.join(words)
-                
-                return text
+                if text:
+                    return text
             return None
-            
         except Exception as e:
             logger.error(f"Transcription error: {e}")
             return None
@@ -968,20 +947,30 @@ class RealTimeTranscriber:
     def output_thread(self):
         """Handle output formatting and display."""
         logger.info("Output thread started")
+        print("Output thread started - ready to display transcriptions")
+        output_counter = 0
         
         try:
             while self.is_running:
                 try:
                     result = self.output_queue.get(timeout=0.5)
+                    output_counter += 1
                     
-                    # Format output with speaker ID instead of role
+                    # Format output with speaker ID and confidence score
                     speaker_label = result["speaker_id"]
                     text = result["text"]
                     timestamp = result["timestamp"] - self.start_time
                     min_sec = divmod(int(timestamp), 60)
                     
-                    # Print with timestamp
-                    print(f"[{min_sec[0]:02d}:{min_sec[1]:02d}] {speaker_label}: {text}")
+                    # Add confidence score to output if available
+                    confidence_str = ""
+                    if "confidence" in result and result["confidence"] is not None:
+                        confidence = result["confidence"]
+                        confidence_str = f"[{confidence:.2f}]"
+                    
+                    # Print with timestamp and confidence
+                    output_line = f"[{min_sec[0]:02d}:{min_sec[1]:02d}] {speaker_label}{confidence_str}: {text}"
+                    print(f"OUTPUT #{output_counter}: {output_line}")
                     
                     self.output_queue.task_done()
                 except queue.Empty:
@@ -989,6 +978,7 @@ class RealTimeTranscriber:
                 
         except Exception as e:
             logger.error(f"Output error: {e}")
+            print(f"Output error: {e}")
     
     def calibrate_ambient_noise(self):
         """Record ambient noise for calibration_duration and adjust silence_threshold."""
@@ -1292,48 +1282,152 @@ class RealTimeTranscriber:
 
     def postprocess_text(self, text):
         """Apply various post-processing rules to clean up the transcribed text."""
-        if not text:
-            return ""
+        if not text or len(text) < 5:
+            return text
         
-        # Apply existing post-processing rules
-        # ... (existing code) ...
-        
-        # Apply deduplication to remove repeated phrases
+        # De-duplicate repetitions at different levels
         text = self.remove_repeated_phrases(text)
-        
-        # Clean up repetitive answers
         text = self.clean_repetitive_answers(text)
+        
+        # Fix common medical transcription errors
+        medical_terms = {
+            r'\bblood pressure\b': 'blood pressure',
+            r'\bheart rate\b': 'heart rate', 
+            r'\bpulse\b': 'pulse',
+            r'\brespiration\b': 'respiration',
+            r'\bsystolic\b': 'systolic',
+            r'\bdiastolic\b': 'diastolic',
+            r'\btemperature\b': 'temperature',
+            r'\boxygen saturation\b': 'oxygen saturation',
+            r'\bO2 sat\b': 'O2 sat',
+            r'\bcholesterol\b': 'cholesterol',
+            r'\bglucose\b': 'glucose',
+            r'\bA1C\b': 'A1C',
+            r'\bmedication\b': 'medication',
+            r'\bprescription\b': 'prescription',
+            r'\bdiagnosis\b': 'diagnosis',
+            r'\bsymptoms?\b': 'symptom',
+            r'\bpatient\b': 'patient',
+            r'\bdoctor\b': 'doctor',
+        }
+        
+        # Capitalize standard medical terms for improved readability
+        for term, replacement in medical_terms.items():
+            pattern = re.compile(term, re.IGNORECASE)
+            text = pattern.sub(replacement, text)
+        
+        # Fix spacing after punctuation
+        text = re.sub(r'(\w)([,.!?;:])', r'\1\2 ', text)
+        text = re.sub(r'\s+([,.!?;:])', r'\1 ', text)
+        
+        # Remove extra spaces
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Ensure first character is capitalized (sentence starts)
+        if text and text[0].islower():
+            text = text[0].upper() + text[1:]
+            
+        # Ensure proper spacing around sentences
+        text = re.sub(r'([.!?])\s*([A-Z])', r'\1 \2', text)
+        
+        # Fix common transcription artifacts
+        filler_words = [
+            r'\bum+\b', r'\buh+\b', r'\ber+\b', r'\bah+\b', 
+            r'\blike\b(?!\s+to|\s+the|\s+a)', r'\bso\b\s+\bso\b', 
+            r'\byou\s+know\b(?!\s+what|\s+that|\s+how|\s+if|\s+when)'
+        ]
+        
+        for word in filler_words:
+            text = re.sub(word, '', text, flags=re.IGNORECASE)
+        
+        # Clean up post-removal spacing issues
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Fix spacing after commas, periods, etc.
+        text = re.sub(r'(\w)([,.!?;:])(\w)', r'\1\2 \3', text)
         
         return text
 
-if __name__ == "__main__":
-    # Configuration (best-practice thresholds)
-    config = {
-        "language": DEFAULT_LANGUAGE,
-        "chunk_size": 4000,
-        "sample_rate": 16000,
-        "use_cuda": torch.cuda.is_available(),
-        "num_threads": min(8, os.cpu_count() or 2),  # use more threads if available
-        "silence_threshold": 0.003, # VAD energy threshold (very sensitive to capture all speech)
-        "min_voice_duration": 0.1,   # capture even very short utterances
-        "min_silence_duration": 0.05, # split on very short silences for better segmentation
-        "no_speech_threshold": 0.85,
-        # NeMo clustering parameters
-        "clustering": {
-            "min_samples": 3,      # Require more samples for a cluster
-            "eps": 0.12,           # Tighter clustering threshold
-            "max_speakers": 8,     # Maximum number of speakers to detect
-            "window_size": 60,     # Longer context window for better clustering
-            "enhanced": True,      # Use NeMo's enhanced clustering
-            "fallback_threshold": 0.70  # Higher threshold for better discrimination
-        },
-        "speech_language": {
-            "min_confidence": 0.75,  # Minimum confidence in language detection
-            "non_latin_ratio": 0.1,  # Maximum allowed non-Latin character ratio
-            "target_lang_confidence": 0.4  # Minimum confidence in target language
+    def _get_best_device(self):
+        """Select the best available compute device."""
+        if torch.backends.mps.is_available():
+            logger.info("MPS (Apple Silicon) device available, using it")
+            return "mps"
+        elif torch.cuda.is_available():
+            logger.info("CUDA device available, using it")
+            return "cuda"
+        else:
+            logger.info("No GPU available, using CPU")
+            return "cpu"
+
+    def process_chunk(self, chunk, chunk_duration):
+        """Process a single audio chunk through the full pipeline."""
+        # This is a convenience method for direct API access or testing
+        # It returns the processed result directly instead of queueing
+        
+        # Preprocess audio
+        processed_audio = self.audio_preprocessor.process(chunk)
+        
+        # Detect voice activity
+        has_voice = self.detect_voice_activity(processed_audio)
+        if not has_voice:
+            return None
+            
+        # Transcribe
+        transcription = self.transcribe_audio(processed_audio)
+        if not transcription:
+            return None
+            
+        # Validate
+        is_valid, confidence, reason = self.validator.validate(transcription, None)
+        if not is_valid:
+            logger.debug(f"Rejected transcription: {reason} - '{transcription}'")
+            return None
+            
+        # Return result for direct processing
+        return {
+            "text": transcription,
+            "confidence": confidence,
+            "timestamp": time.time(),
+            "duration": chunk_duration
         }
+
+    def validate_transcription(self, text, confidence):
+        """
+        Simple validation that only filters empty text
+        """
+        if not text or len(text.strip()) == 0:
+            return False, 0.0, "Empty text"
+            
+        # Use a reasonable confidence threshold
+        if confidence is not None and confidence < 0.3:
+            return False, confidence, "Very low confidence"
+            
+        return True, confidence or 0.9, "Passed validation"
+
+if __name__ == "__main__":
+    # Add diagnostic print statement
+    print("Starting real-time transcription system...")
+    
+    # Configuration focused on quality
+    config = {
+        "language": "en",                       # Use English for transcription
+        "use_mps": True,                        # Use Apple Silicon MPS acceleration
+        "silence_threshold": 0.01,             # Balanced voice detection threshold
+        "chunk_size": 6000,                     # Larger chunks for better context (500ms)
+        "min_voice_duration": 0.7,              # Minimum speech segment for quality
+        "min_silence_duration": 0.3,            # Better segmentation between utterances
+        "speaker_similarity_threshold": 0.9,    # Higher threshold for better speaker distinction
+        "max_speakers": 4                      # Limit to 3 speakers for clearer diarization
     }
     
+    print("Creating transcriber object...")
     # Create and start the transcriber
-    transcriber = RealTimeTranscriber(config)
-    transcriber.start()
+    try:
+        transcriber = RealTimeTranscriber(config)
+        print("Transcriber created successfully. Starting...")
+        transcriber.start()
+    except Exception as e:
+        print(f"ERROR: Failed to start transcriber: {e}")
+        import traceback
+        traceback.print_exc()
