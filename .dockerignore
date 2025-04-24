@@ -1,0 +1,41 @@
+# Git directories
+.git
+.github
+.gitignore
+
+# Python environments
+whisperenv/
+venv/
+env/
+.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Build directories
+build/
+dist/
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs and data
+*.log
+data/
+*.wav
+*.mp3
+*.flac
+
+# IDE directories
+.vscode/
+.idea/
+*.swp
+*.swo 

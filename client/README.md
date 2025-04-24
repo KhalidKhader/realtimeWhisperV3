@@ -1,6 +1,24 @@
-# Getting Started with Create React App
+# Real-Time Transcription React Client
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This is the frontend client for the Real-Time Whisper application, built with React and Material UI.
+
+## Features
+
+- **Modern Material UI Interface**: Clean, professional design with intuitive controls
+- **Real-time Transcription Display**: Visualize speech as it happens with color-coded speaker identification
+- **Language Selection**: Choose from multiple languages for transcription
+- **Speaker Count Configuration**: Optimize speaker diarization by specifying the number of speakers
+- **Responsive Design**: Works well on desktop and mobile devices
+
+## Installation
+
+In the project directory, run:
+
+```bash
+npm install
+```
+
+This will install all dependencies, including React, Material UI, and other required packages.
 
 ## Available Scripts
 
@@ -27,44 +45,30 @@ It correctly bundles React in production mode and optimizes the build for the be
 The build is minified and the filenames include the hashes.\
 Your app is ready to be deployed!
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Usage
 
-### `npm run eject`
+1. Make sure the backend server is running (see main README.md)
+2. Start the React client with `npm start`
+3. In the web interface:
+   - Select your preferred language from the dropdown
+   - Choose the number of speakers expected in the conversation
+   - Click "Start Transcription" to begin
+   - Speak into your microphone
+   - View transcriptions in real-time with color-coded speaker identification
+   - Click "Stop Transcription" when finished
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Configuration
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+The client connects to a WebSocket server at `ws://localhost:8000/ws` by default. If you need to change this URL (for example, if your backend is running on a different host or port), you can modify it in the `App.js` file.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## Dependencies
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+- React
+- Material UI (@mui/material, @mui/icons-material)
+- Emotion (@emotion/react, @emotion/styled)
 
-## Learn More
+## Troubleshooting
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- **Connection issues**: Ensure the backend server is running and accessible
+- **Microphone access**: Make sure you've granted microphone permissions in your browser
+- **UI rendering problems**: Check that Material UI components are properly installed

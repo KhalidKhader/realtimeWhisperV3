@@ -17,10 +17,17 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # Determine language from query parameters (default to DEFAULT_LANGUAGE)
     language = websocket.query_params.get("lang", DEFAULT_LANGUAGE)
-    print(f"WebSocket connection accepted, language={language}")
-    logger.info(f"WebSocket connection accepted, language={language}")
-    # Initialize transcriber with selected language
-    transcriber = RealTimeTranscriber(config={"language": language})
+    # Get number of speakers from query parameters (default to 2)
+    speakers = int(websocket.query_params.get("speakers", 2))
+    
+    print(f"WebSocket connection accepted, language={language}, speakers={speakers}")
+    logger.info(f"WebSocket connection accepted, language={language}, speakers={speakers}")
+    
+    # Initialize transcriber with selected language and speaker count
+    transcriber = RealTimeTranscriber(config={
+        "language": language,
+        "max_speakers": speakers
+    })
     transcriber.start_time = time.time()
     transcriber.is_running = True
     # Start processing threads (VAD, diarization, transcription)

@@ -36,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 import re
 from langdetect import detect_langs
 import math
+import argparse
 
 # Load environment variables
 load_dotenv()
@@ -243,15 +244,17 @@ class RealTimeTranscriber:
             "buffer_size": 5,         # 30s context buffer
             "silence_threshold": 0.01, # Higher threshold for cleaner speech detection
             "min_voice_duration": 0.7,   # Longer segments for better quality
-            "min_silence_duration": 0.2, # Longer silence for better segmentation
+            "min_silence_duration": 0.3, # Longer silence for better segmentation
             "language": DEFAULT_LANGUAGE,
             "use_cuda": torch.cuda.is_available(),
             "use_mps": torch.backends.mps.is_available(),
             "num_threads": min(8, os.cpu_count() or 2),  # use more threads if available
             "max_speakers": 3,  # Fewer speakers for clearer diarization
-            "speaker_similarity_threshold": 0.7,  # Higher threshold for better speaker distinction
+            "speaker_similarity_threshold": 0.85,  # Higher threshold for better speaker distinction
             "capture_all_speech": True  # capture all voices in main run
         }
+        
+
         
         # Override defaults with provided config
         self.config = default_config
@@ -1406,19 +1409,27 @@ class RealTimeTranscriber:
         return True, confidence or 0.9, "Passed validation"
 
 if __name__ == "__main__":
+    # Add simple argument parsing for key parameters
+    parser = argparse.ArgumentParser(description="Real-time audio transcription with speaker diarization")
+    parser.add_argument("--language", "-l", default="en", help="Language code (e.g., 'en', 'es', 'fr', etc.)")
+    parser.add_argument("--speakers", "-s", type=int, default=2, help="Maximum number of speakers to detect")
+    
+    args = parser.parse_args()
+    
     # Add diagnostic print statement
     print("Starting real-time transcription system...")
+    print(f"Language: {args.language}, Number of speakers: {args.speakers}")
     
     # Configuration focused on quality
     config = {
-        "language": "en",                       # Use English for transcription
-        "use_mps": True,                        # Use Apple Silicon MPS acceleration
-        "silence_threshold": 0.01,             # Balanced voice detection threshold
-        "chunk_size": 6000,                     # Larger chunks for better context (500ms)
-        "min_voice_duration": 0.7,              # Minimum speech segment for quality
-        "min_silence_duration": 0.3,            # Better segmentation between utterances
-        "speaker_similarity_threshold": 0.9,    # Higher threshold for better speaker distinction
-        "max_speakers": 4                      # Limit to 3 speakers for clearer diarization
+        "language": args.language,          # Use specified language
+        "max_speakers": args.speakers,      # Use specified number of speakers
+        "use_mps": True,                    # Use Apple Silicon MPS acceleration
+        "silence_threshold": 0.01,          # Balanced voice detection threshold
+        "chunk_size": 6000,                 # Larger chunks for better context (500ms)
+        "min_voice_duration": 0.7,          # Minimum speech segment for quality
+        "min_silence_duration": 0.3,        # Better segmentation between utterances
+        "speaker_similarity_threshold": 0.9, # Higher threshold for better speaker distinction
     }
     
     print("Creating transcriber object...")
@@ -1431,3 +1442,4 @@ if __name__ == "__main__":
         print(f"ERROR: Failed to start transcriber: {e}")
         import traceback
         traceback.print_exc()
+
