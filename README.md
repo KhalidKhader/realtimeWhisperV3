@@ -1,21 +1,23 @@
 # Enhanced Real-Time Medical Conversation Transcription
 
 **Real-time Whisper** is a high-accuracy, low-latency system for streaming transcription of medical conversations.
-It combines OpenAI Whisper v3 Large for speech recognition with NVIDIA NeMo (and optional Pyannote) for speaker diarization.
+It combines OpenAI Whisper Large-v3 for speech recognition with NVIDIA NeMo (and optional Pyannote) for speaker diarization, optimized for real-time performance.
 
 ---
 
 ## 🚀 Features
 
 - **Real-time audio capture** using PyAudio with optimized buffer management.
-- **Streaming transcription** powered by Whisper large-v3 with timestamp support.
-- **Advanced speaker diarization** via NVIDIA NeMo or Pyannote fallback.
+- **Fast streaming transcription** powered by Whisper large-v3 with timestamp support.
+- **Advanced speaker diarization** via NVIDIA NeMo or Pyannote fallback with optimized speaker thresholds.
 - **Modern Material UI interface** with intuitive controls and professional design.
 - **Configurable speaker count** to optimize diarization for your specific scenario.
 - **Color-coded transcription display** for easy speaker identification.
 - **Multi-threaded pipeline** for VAD, diarization, transcription, and output.
 - **GPU acceleration** (CUDA/MPS) to maximize throughput.
-- **Ambient noise auto-calibration** at startup to adapt VAD thresholds to your room's noise floor.
+- **High-quality Voice Activity Detection (VAD)** using Silero VAD with tuned thresholds for optimized real-time performance.
+- **Low-latency configuration** with optimized buffer sizes and speech segmentation parameters.
+- **Anti-hallucination measures** to improve transcription quality in noisy environments.
 - **Configurable parameters** including language, speaker count, chunk size, and silence thresholds.
 
 ---
@@ -70,6 +72,11 @@ source whisperenv/bin/activate
 
 # Start the server
 python app.py
+```
+
+For macOS users with Apple Silicon (M1/M2/M3), use the MPS fallback option for better performance:
+```bash
+export PYTORCH_ENABLE_MPS_FALLBACK=1 && uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 Alternatively, use the provided script:
